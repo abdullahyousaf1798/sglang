@@ -1,0 +1,2 @@
+# Large and only needed for debugging; summaries, configs and client logs are kept.
+server.log
