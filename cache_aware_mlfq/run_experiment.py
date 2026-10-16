@@ -73,8 +73,14 @@ def read_cache_counters() -> dict:
             rf'sglang:prefill_effective_tokens_total\{{[^}}]*mode="{mode}"[^}}]*\}} ([0-9.e+]+)', text
         )
         counters[f"prefill_tokens_{mode}"] = sum(float(v) for v in values)
-    retracted = re.findall(r"sglang:num_retracted_requests_total\{[^}]*\} ([0-9.e+]+)", text)
-    counters["retracted_requests"] = sum(float(v) for v in retracted)
+    # Requests whose KV was released and requeued (decode retraction or priority
+    # preemption), and the decoded tokens they lost and must recompute.
+    for metric, key in [
+        ("sglang:num_retracted_requests_total", "retracted_requests"),
+        ("sglang:num_retracted_output_tokens_total", "retracted_output_tokens"),
+    ]:
+        values = re.findall(rf"{metric}\{{[^}}]*\}} ([0-9.e+]+)", text)
+        counters[key] = sum(float(v) for v in values)
     return counters
 
 
@@ -122,8 +128,16 @@ def main() -> None:
                 bench_cmd += [f"--{key}", str(value)]
             started = time.time()
             with open(out / "bench.log", "w") as bench_log:
-                subprocess.run(bench_cmd, stdout=bench_log, stderr=subprocess.STDOUT,
-                               cwd=REPO, check=True)
+                bench = subprocess.Popen(bench_cmd, stdout=bench_log, stderr=subprocess.STDOUT,
+                                         cwd=REPO)
+                # The client waits forever on a dead server, which would keep the pod busy.
+                while bench.poll() is None:
+                    if server.poll() is not None:
+                        bench.kill()
+                        sys.exit(f"server exited with code {server.returncode} during the benchmark")
+                    time.sleep(5)
+                if bench.returncode != 0:
+                    sys.exit(f"benchmark client failed with code {bench.returncode}")
             time.sleep(10)  # let the server's periodic metrics logging catch up
             summary = json.loads((out / "bench.jsonl").read_text().splitlines()[-1])
             summary["wall_time_s"] = time.time() - started

@@ -2594,6 +2594,7 @@ class Scheduler(
             output_streamer=self.output_streamer,
             beam_coordinator=self.beam_coordinator,
             abort_request=self.abort_request,
+            mlfq=self.policy.mlfq,
         )
 
     def init_internal_state(self) -> None:
@@ -3388,6 +3389,18 @@ class Scheduler(
         req.time_stats.trace_ctx.abort(abort_info={"reason": reason.message})
         req.update_finish_state()
         self.output_streamer.stream_output([req], req.return_logprob)
+
+    def _requeue_preempted(self, preempted: List[Req]) -> None:
+        """Put requests preempted for a higher-priority request back in the waiting queue."""
+        if preempted and self.metrics_reporter.enable_metrics:
+            # Preemption releases KV like a decode retraction; count it the same way.
+            self.metrics_reporter.metrics_collector.increment_retracted_reqs(
+                num_retracted_reqs=len(preempted),
+                num_retracted_input_tokens=sum(len(r.origin_input_ids) for r in preempted),
+                num_retracted_output_tokens=sum(len(r.output_ids) for r in preempted),
+            )
+        for req in preempted:
+            self._add_request_to_queue(req)
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         if not self._set_or_validate_priority(req):
@@ -4189,6 +4202,23 @@ class Scheduler(
                 has_chunked_req=(self.chunked_req is not None),
                 truncation_align_size=self.truncation_align_size,
             )
+            # The check above preempts only when the request-count limit is hit;
+            # when KV memory is what ran out, let this request preempt too.
+            # NO_TOKEN also follows a successful admission that spent the budget,
+            # so only a request that was not admitted may preempt and retry.
+            if (
+                res == AddReqResult.NO_TOKEN
+                and self.enable_priority_preemption
+                and not (adder.can_run_list and req is adder.can_run_list[-1])
+                and adder.preempt_to_schedule(req)
+            ):
+                # Preemption can evict tree nodes, so match the prefix again.
+                req.init_next_round_input(self.tree_cache)
+                res = adder.add_one_req(
+                    req,
+                    has_chunked_req=(self.chunked_req is not None),
+                    truncation_align_size=self.truncation_align_size,
+                )
 
             if self.enable_lora:
                 running_loras.add(req.lora_id)
@@ -4224,8 +4254,7 @@ class Scheduler(
         if len(can_run_list) == 0:
             # Preemption already released these requests; requeue them even
             # though the request they made room for was not admitted.
-            for req in adder.preempt_list:
-                self._add_request_to_queue(req)
+            self._requeue_preempted(adder.preempt_list)
             return None, running_batch
 
         can_run_set = set(can_run_list)
@@ -4234,9 +4263,7 @@ class Scheduler(
             for req in can_run_list:
                 retries.cancel(req.rid)
         self.waiting_queue = [x for x in self.waiting_queue if x not in can_run_set]
-        if adder.preempt_list:
-            for req in adder.preempt_list:
-                self._add_request_to_queue(req)
+        self._requeue_preempted(adder.preempt_list)
 
         if adder.new_chunked_req is not None:
             # Update chunked prefill

@@ -278,11 +278,13 @@ def check_server_args(server_args: Any):
 
     # Check scheduling policy
     if cfg.enable_priority_scheduling:
+        # sj-mlfq assigns each request's priority itself, from its MLFQ level.
         assert cfg.schedule_policy in [
             "fcfs",
             "lof",
+            "sj-mlfq",
         ], (
-            f"To use priority scheduling, schedule_policy must be 'fcfs' or 'lof'. '{cfg.schedule_policy}' is not supported."
+            f"To use priority scheduling, schedule_policy must be 'fcfs', 'lof' or 'sj-mlfq'. '{cfg.schedule_policy}' is not supported."
         )
         if cfg.default_priority_value is None:
             logger.warning(

@@ -47,6 +47,7 @@ from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
     split_cached_prefix_by_tier,
 )
+from sglang.srt.managers.skip_join_mlfq import SkipJoinMlfq
 from sglang.srt.mem_cache.allocator.hisparse import (
     DeepSeekV4HiSparseTokenToKVPoolAllocator,
 )
@@ -172,6 +173,7 @@ class CacheAwarePolicy(Enum):
     DFS_WEIGHT = "dfs-weight"  # depth-first search weighting
     HRRN = "hrrn"  # highest response ratio next, token-based aging
     SHORTEST_PREFILL_FIRST = "shortest-prefill-first"
+    SJ_MLFQ = "sj-mlfq"  # skip-join multi-level feedback queue (FastServe)
 
 
 class CacheAgnosticPolicy(Enum):
@@ -202,6 +204,7 @@ class SchedulePolicy:
         self.priority_sign = 1 if schedule_low_priority_values_first else -1
         self._shortest_prefill_calls = 0
         self._waiting_prefix_refresh_calls = 0
+        self.mlfq = self._init_mlfq()
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
@@ -243,6 +246,8 @@ class SchedulePolicy:
                 SchedulePolicy._sort_by_hrrn(
                     waiting_queue, temporary_deprioritized, processed_tokens
                 )
+            elif policy == CacheAwarePolicy.SJ_MLFQ:
+                self.mlfq.order(waiting_queue)
             elif policy == CacheAwarePolicy.SHORTEST_PREFILL_FIRST:
                 SchedulePolicy._sort_by_shortest_prefill(
                     waiting_queue, temporary_deprioritized
@@ -274,6 +279,20 @@ class SchedulePolicy:
                 raise ValueError(f"Unknown CacheAgnostic Policy: {policy=}")
 
         self._touch_waiting_prefixes(policy, waiting_queue)
+
+    def _init_mlfq(self) -> Optional[SkipJoinMlfq]:
+        if self.policy != CacheAwarePolicy.SJ_MLFQ:
+            return None
+        # MLFQ levels live in req.priority as -level and rely on priority preemption.
+        if not self.enable_priority_scheduling or self.schedule_low_priority_values_first:
+            raise ValueError(
+                "--schedule-policy sj-mlfq requires --enable-priority-scheduling "
+                "and the default higher-values-first priority order"
+            )
+        schedule = get_schedule()
+        return SkipJoinMlfq(
+            cost_mode=schedule.sj_mlfq_cost, profile_path=schedule.sj_mlfq_profile
+        )
 
     def _touch_waiting_prefixes(self, policy: Policy, waiting_queue: List[Req]) -> None:
         # Head last, so LRU evicts in reverse admission order; cache-aware policies

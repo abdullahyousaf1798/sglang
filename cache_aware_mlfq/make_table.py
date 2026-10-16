@@ -21,7 +21,8 @@ COLUMNS = [
     ("Throughput (req/s)", lambda s, c: f"{s['throughput']:.2f}"),
     ("Prompt tokens from GPU cache", lambda s, c: share(c, "device_hit")),
     ("Prompt tokens from CPU cache", lambda s, c: share(c, "host_hit")),
-    ("Preemptions", lambda s, c: f"{c.get('retracted_requests', 0):.0f}"),
+    ("Preempted or retracted", lambda s, c: f"{c.get('retracted_requests', 0):.0f}"),
+    ("Decoded tokens recomputed", lambda s, c: f"{c.get('retracted_output_tokens', 0):.0f}"),
 ]
 
 

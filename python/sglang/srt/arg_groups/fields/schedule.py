@@ -93,9 +93,26 @@ class Schedule(msgspec.Struct):
                 "routing-key",
                 "hrrn",
                 "shortest-prefill-first",
+                "sj-mlfq",
             ],
         ),
     ] = "fcfs"
+    sj_mlfq_cost: A[
+        str,
+        Arg(
+            help=(
+                "How sj-mlfq predicts a request's first-iteration time to pick its starting "
+                "queue. 'prompt' prefills the whole prompt from scratch (FastServe); "
+                "'cache-aware' prefills only the uncached suffix on top of the cached prefix."
+            ),
+            choices=["prompt", "cache-aware"],
+        ),
+    ] = "cache-aware"
+    sj_mlfq_profile: A[
+        Optional[str],
+        "Prefill latency profile (JSON from cache_aware_mlfq/profile_prefill.py) that sj-mlfq "
+        "uses to predict first-iteration time. Required with --schedule-policy sj-mlfq.",
+    ] = None
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",

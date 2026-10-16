@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import (
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     )
     from sglang.srt.managers.auxiliary_output import HostAuxiliaryOutput
     from sglang.srt.managers.hisparse_coordinator import HiSparseCoordinator
+    from sglang.srt.managers.skip_join_mlfq import SkipJoinMlfq
     from sglang.srt.managers.scheduler_components.logprob_result_processor import (
         SchedulerLogprobResultProcessor,
     )
@@ -113,6 +115,13 @@ class SchedulerBatchResultProcessor:
     output_streamer: SchedulerOutputStreamer
     beam_coordinator: BeamCoordinator
     abort_request: Callable
+    mlfq: Optional[SkipJoinMlfq] = None
+
+    def _charge_mlfq(self, batch: ScheduleBatch) -> None:
+        # launch_ts is set in Scheduler.run_batch; with overlap scheduling this
+        # runs once the batch's outputs are on the host, i.e. after its forward.
+        if self.mlfq is not None and batch.launch_ts is not None:
+            self.mlfq.charge(batch.reqs, time.monotonic() - batch.launch_ts)
 
     def process_batch_result_prebuilt(self, batch: ScheduleBatch):
         assert self.disaggregation_mode == DisaggregationMode.DECODE
@@ -266,6 +275,7 @@ class SchedulerBatchResultProcessor:
         if self.is_generation:
             if result.copy_done is not None:
                 result.copy_done.synchronize()
+            self._charge_mlfq(batch)
             auxiliary_output_starts = self.snapshot_auxiliary_output_starts(
                 batch, result
             )
@@ -946,6 +956,7 @@ class SchedulerBatchResultProcessor:
     ):
         if result.copy_done is not None:
             result.copy_done.synchronize()
+        self._charge_mlfq(batch)
         auxiliary_output_starts = self.snapshot_auxiliary_output_starts(batch, result)
         auxiliary_output = result.auxiliary_host_output
         if result.routed_experts_output is not None:
