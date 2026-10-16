@@ -1,2 +1,4 @@
 # Large and only needed for debugging; summaries, configs and client logs are kept.
 server.log
+# Completion markers written by the pod-side job scripts.
+.*_done
