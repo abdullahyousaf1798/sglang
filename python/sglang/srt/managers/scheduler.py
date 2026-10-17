@@ -4081,11 +4081,17 @@ class Scheduler(
             # in the waiting queue.
             return None, running_batch
 
+        gate_level = (
+            self.policy.mlfq.prefill_gate_level(running_batch.reqs)
+            if self.policy.mlfq_prefill_gate
+            else None
+        )
         # A chunked prefill already started always continues.
         if (
-            self.policy.mlfq_prefill_gate
+            gate_level is not None
             and self.chunked_req is None
-            and self.policy.mlfq.defers_prefill(self.waiting_queue, running_batch.reqs)
+            and self.waiting_queue
+            and self.waiting_queue[0].mlfq_level > gate_level
         ):
             return None, running_batch
 
@@ -4156,6 +4162,9 @@ class Scheduler(
             # A spent pass budget admits no one, even before the first
             # candidate: the resumed chunk or mixed decode rows can spend it.
             if adder.budget_state() == AddReqResult.OTHER:
+                break
+            # The queue is in MLFQ order, so every later request is less urgent too.
+            if gate_level is not None and req.mlfq_level > gate_level:
                 break
             if self.enable_lora and not self.can_schedule_lora_req(req, running_loras):
                 continue

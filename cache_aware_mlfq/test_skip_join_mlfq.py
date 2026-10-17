@@ -187,13 +187,20 @@ def test_prefill_gate():
     def at(level):
         return types.SimpleNamespace(mlfq_level=level)
 
-    gate = mlfq_mod.SkipJoinMlfq.defers_prefill
-    running = [at(2), at(7)]
-    assert gate([at(5)], running)          # a level-2 request is mid-answer: decode first
-    assert not gate([at(2)], running)      # as urgent as the most urgent running request
-    assert not gate([at(1), at(9)], running)
-    assert not gate([at(9)], [])           # nothing running: prefill whatever waits
-    assert not gate([], running)
+    gate = mlfq_mod.SkipJoinMlfq.prefill_gate_level
+    assert gate([at(2), at(7)]) == 2  # a level-2 request is mid-answer
+    assert gate([at(None), at(4)]) == 4
+    assert gate([]) is None  # nothing running: prefill whatever waits
+
+    # The admission loop stops at the first waiting request past the gate, so a
+    # short head no longer lets a long, low-priority prefill in behind it.
+    waiting, limit = [at(1), at(2), at(9), at(3)], gate([at(2), at(7)])
+    admitted = []
+    for req in waiting:
+        if req.mlfq_level > limit:
+            break
+        admitted.append(req.mlfq_level)
+    assert admitted == [1, 2]
 
 
 if __name__ == "__main__":

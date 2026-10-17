@@ -171,16 +171,17 @@ class SkipJoinMlfq:
                 self._demotions += 1
 
     @staticmethod
-    def defers_prefill(waiting_queue: List[Req], running_reqs: List[Req]) -> bool:
-        """Prefill gate: decode instead while every running request is more urgent than the next waiting one.
+    def prefill_gate_level(running_reqs: List[Req]) -> Optional[int]:
+        """Prefill gate: the worst level a waiting request may have to be prefilled now, or None.
 
         SGLang runs a waiting request's prefill before the running batch's next
         decode step, so a long, low-priority prefill stalls every running request;
-        FastServe runs the highest-priority work each iteration instead. Expects
-        ``waiting_queue`` in ``order()``'s order.
+        FastServe runs the highest-priority work each iteration instead. Only
+        requests at least as urgent as the most urgent running request pass;
+        with nothing running, everything does.
         """
         levels = [r.mlfq_level for r in running_reqs if r.mlfq_level is not None]
-        return bool(waiting_queue and levels) and waiting_queue[0].mlfq_level > min(levels)
+        return min(levels) if levels else None
 
     def quantum_s(self, level: int) -> float:
         return self._base_quantum_s * QUANTUM_MULTIPLIER**level
