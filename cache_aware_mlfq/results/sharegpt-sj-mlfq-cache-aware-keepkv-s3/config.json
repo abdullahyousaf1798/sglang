@@ -1,0 +1,37 @@
+{
+  "name": "sharegpt-sj-mlfq-cache-aware-keepkv-s3",
+  "workload_name": "sharegpt",
+  "started_at": "2026-10-17T17:30:46Z",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--max-total-tokens",
+    "24576",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "30",
+    "--enable-metrics",
+    "--schedule-policy",
+    "sj-mlfq",
+    "--sj-mlfq-profile",
+    "/opt/sglang/cache_aware_mlfq/prefill_profile_4090.json",
+    "--enable-priority-scheduling",
+    "--priority-scheduling-preemption-threshold",
+    "0",
+    "--retraction-policy",
+    "priority",
+    "--sj-mlfq-cost",
+    "cache-aware",
+    "--preempt-keep-kv"
+  ],
+  "workload": {
+    "num-prompts": 200,
+    "request-rate": 3.0,
+    "seed": 3
+  }
+}

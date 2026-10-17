@@ -203,3 +203,54 @@ Every MLFQ row uses cache-aware placement with preempted KV kept.
 - **The threshold trades as expected, with small effects.** Threshold 2 trades first-token latency (4.95 s) for decode speed (53 ms per token). Threshold 1 gives the best MLFQ numbers in this sweep, but within noise.
 - **On this synthetic workload, no MLFQ setting reliably beats lpm on mean job completion time.** Every setting does cut mean TTFT by 55-77% against fcfs and lpm, and roughly halves lpm's p99. Each also decodes 2-3x slower per token than fcfs.
 - **Next:** this workload's output lengths are uniform (64-256 tokens), which is where MLFQ's least-attained-service ordering helps least. The next step moves the main workload to real ShareGPT conversations, with heavy-tailed answer lengths, as in FastServe's own evaluation.
+
+## Main table: real ShareGPT conversations, 3 seeds
+
+**Setup:**
+- 200 real multi-turn ShareGPT conversations (`prepare_sharegpt.py`), each reply as long as the real one, released at 3.0 requests per second.
+- A pilot put capacity at about 2.8 requests per second, so this is at saturation.
+- 3 client seeds per configuration (`run_sharegpt_main.sh 3.0 200`). Cells are mean ± standard deviation over seeds.
+
+| Config | Job completion, mean (s) | Job completion, p99 (s) | TTFT, mean (s) | TTFT, p99 (s) | TPOT, mean (ms) | Throughput (req/s) | Preemptions per run | Load-back copy time per run (s) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fcfs | 11.58 ± 2.88 | 32.72 ± 7.48 | 5.21 ± 2.55 | 23.33 ± 7.64 | 23.1 ± 0.2 | 2.49 ± 0.10 | 0 | 3.9 ± 0.4 |
+| lpm | 11.36 ± 2.65 | 92.34 ± 34.34 | 5.00 ± 2.31 | 87.19 ± 33.88 | 23.1 ± 0.3 | 2.47 ± 0.11 | 0 | 2.3 ± 0.1 |
+| shortest-prefill-first | **10.03** ± 1.92 | 93.26 ± 33.02 | 3.62 ± 1.58 | 81.88 ± 31.89 | 23.3 ± 0.3 | 2.52 ± 0.13 | 0 | 3.3 ± 0.4 |
+| sj-mlfq-prompt (FastServe) | 16.72 ± 4.74 | 95.59 ± 15.74 | 0.12 ± 0.02 | 0.87 ± 0.41 | 52.5 ± 12.2 | 2.33 ± 0.17 | 1,920 ± 608 | 27.6 ± 8.2 |
+| sj-mlfq-cache-aware | 17.16 ± 5.20 | 100.47 ± 20.65 | 0.11 ± 0.01 | 0.63 ± 0.30 | 53.7 ± 13.1 | 2.31 ± 0.15 | 1,971 ± 640 | 28.4 ± 9.4 |
+| sj-mlfq-cache-aware-keepkv | 16.49 ± 4.99 | 94.13 ± 25.49 | **0.10** ± 0.02 | 0.79 ± 0.47 | 52.2 ± 12.4 | 2.32 ± 0.17 | 1,882 ± 643 | 25.0 ± 9.5 |
+
+**Reading:**
+- **First tokens are dramatically faster.** Every MLFQ variant cuts mean time to first token from about 5 s to about 0.1 s, and p99 from 23-87 s to under 1 s.
+- **Everything else gets worse.**
+  - Mean job completion time is 42-48% worse than fcfs, and 64-71% worse than shortest-prefill-first.
+  - Decoding is 2.3x slower per token.
+  - Throughput is 7% lower.
+- **Job completion time is the wait plus the answer, and MLFQ moves the wait into the answer.**
+  - fcfs averages 5.2 s of waiting before the first token and 6.4 s generating the answer.
+  - MLFQ waits 0.1 s but spends 16.4 s on the answer. With memory full, each new request starts in the top queue and pauses a running request that has already been demoted. That is about 2.7 pauses per request (about 700 requests per run).
+- **The pauses are not free.**
+  - Each paused request later reloads its KV from CPU memory: 25-28 s of copy time per run against 2-4 s for the baselines.
+  - Each new or resumed request's prefill stalls the whole decode batch.
+  - The lost capacity, at a load already at saturation, turns into waiting for everyone.
+- **Reordering by size does help when it is free.** Shortest-prefill-first never preempts, and it beats fcfs on mean job completion time by 13%.
+- **Cache-aware placement and keep-KV are within noise of FastServe's placement here.** Histories average about 1.2k tokens and every prefill is cheap, so the placement rule has little to distinguish. Recompute was never the dominant cost.
+
+**Why this workload is close to the worst case for both ideas, and what FastServe actually measured:**
+- **FastServe's evaluation** used single-turn ShareGPT and Alpaca requests with Poisson arrivals: no conversations and no prefix cache. It ran OPT models on 40 GB A100s against 2023 vLLM (v0.1.7: first-come-first-served, run to completion, no chunked prefill or prefix caching).
+- **Its main metric** was average latency per output token (end-to-end time divided by output length) and throughput under a 0.3 s-per-token target. That metric weighs short requests that waited heavily, which is exactly what MLFQ fixes.
+- **Its gains** were largest with long, skewed jobs at high load. On Alpaca's short jobs every system stayed fast. Swapping cost under 5% of latency because it was proactive.
+- **What our ideas need:**
+  1. Long, mostly cached histories, so the full prompt and the uncached suffix put a request in very different queues.
+  2. Very uneven answer lengths, so letting short requests pass long ones pays off.
+  3. Cheap preemption: keep-KV, two-tier eviction (step 4b) and proactive load-back (step 5).
+- **This workload has none of the three.** Short histories, moderate answers, and preemption that costs 7% of throughput.
+
+**Next workload candidate: Mooncake production traces** (Kimi, FAST'25). These are one-hour traces with real arrival times, lengths and 512-token prefix-block sharing:
+
+| Trace | Requests in 1 h | Input tokens: mean / median / p99 | Output tokens: mean / median / p90 | Prompt shared with an earlier request |
+| --- | --- | --- | --- | --- |
+| conversation | 12,031 | 12.0k / 6.9k / 85k | 343 / 350 / 597 | 37% |
+| tool & agent | 23,608 | 8.6k / 6.3k / 62k | 182 / 30 / 507 | 57% |
+
+The tool-and-agent trace meets all three conditions. It needs an 80 GB GPU: the 4090's KV pool holds less than one p99 prompt. It also needs a replayer that preserves the block sharing, because SGLang's built-in Mooncake replay shrinks each block to about 130 filler tokens.

@@ -1,0 +1,27 @@
+{
+  "name": "sharegpt-shortest-prefill-first-s2",
+  "workload_name": "sharegpt",
+  "started_at": "2026-10-17T16:34:20Z",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--max-total-tokens",
+    "24576",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "30",
+    "--enable-metrics",
+    "--schedule-policy",
+    "shortest-prefill-first"
+  ],
+  "workload": {
+    "num-prompts": 200,
+    "request-rate": 3.0,
+    "seed": 2
+  }
+}
