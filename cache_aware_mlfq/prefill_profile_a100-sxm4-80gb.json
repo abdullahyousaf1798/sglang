@@ -1,0 +1,395 @@
+{
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "model": "Qwen/Qwen3-8B",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--context-length",
+    "131072",
+    "--json-model-override-args",
+    "{\"max_position_embeddings\": 131072, \"rope_scaling\": {\"rope_type\": \"yarn\", \"factor\": 4.0, \"original_max_position_embeddings\": 32768}}",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "80",
+    "--enable-metrics"
+  ],
+  "request_overhead_ms": 20.78,
+  "cells": [
+    {
+      "uncached": 32,
+      "cached": 0,
+      "latency_ms": 18.84,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 128,
+      "cached": 0,
+      "latency_ms": 20.75,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 512,
+      "cached": 0,
+      "latency_ms": 41.86,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 1024,
+      "cached": 0,
+      "latency_ms": 77.23,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 2048,
+      "cached": 0,
+      "latency_ms": 144.09,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 4096,
+      "cached": 0,
+      "latency_ms": 289.63,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 8192,
+      "cached": 0,
+      "latency_ms": 613.55,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 16384,
+      "cached": 0,
+      "latency_ms": 1419.75,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 32768,
+      "cached": 0,
+      "latency_ms": 3607.49,
+      "cached_tokens_seen": 0
+    },
+    {
+      "uncached": 32,
+      "cached": 2048,
+      "latency_ms": 22.46,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 128,
+      "cached": 2048,
+      "latency_ms": 25.73,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 512,
+      "cached": 2048,
+      "latency_ms": 49.84,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 1024,
+      "cached": 2048,
+      "latency_ms": 86.91,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 2048,
+      "cached": 2048,
+      "latency_ms": 161.32,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 4096,
+      "cached": 2048,
+      "latency_ms": 322.02,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 8192,
+      "cached": 2048,
+      "latency_ms": 669.45,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 16384,
+      "cached": 2048,
+      "latency_ms": 1519.91,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 32768,
+      "cached": 2048,
+      "latency_ms": 3803.82,
+      "cached_tokens_seen": 2048
+    },
+    {
+      "uncached": 32,
+      "cached": 8192,
+      "latency_ms": 29.69,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 128,
+      "cached": 8192,
+      "latency_ms": 35.5,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 512,
+      "cached": 8192,
+      "latency_ms": 72.73,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 1024,
+      "cached": 8192,
+      "latency_ms": 117.95,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 2048,
+      "cached": 8192,
+      "latency_ms": 200.65,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 4096,
+      "cached": 8192,
+      "latency_ms": 395.65,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 8192,
+      "cached": 8192,
+      "latency_ms": 810.92,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 16384,
+      "cached": 8192,
+      "latency_ms": 1803.55,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 32768,
+      "cached": 8192,
+      "latency_ms": 4364.8,
+      "cached_tokens_seen": 8192
+    },
+    {
+      "uncached": 32,
+      "cached": 16384,
+      "latency_ms": 35.83,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 128,
+      "cached": 16384,
+      "latency_ms": 44.11,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 512,
+      "cached": 16384,
+      "latency_ms": 98.3,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 1024,
+      "cached": 16384,
+      "latency_ms": 157.32,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 2048,
+      "cached": 16384,
+      "latency_ms": 257.11,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 4096,
+      "cached": 16384,
+      "latency_ms": 492.67,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 8192,
+      "cached": 16384,
+      "latency_ms": 997.18,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 16384,
+      "cached": 16384,
+      "latency_ms": 2175.69,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 32768,
+      "cached": 16384,
+      "latency_ms": 5109.82,
+      "cached_tokens_seen": 16384
+    },
+    {
+      "uncached": 32,
+      "cached": 32768,
+      "latency_ms": 51.55,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 128,
+      "cached": 32768,
+      "latency_ms": 72.24,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 512,
+      "cached": 32768,
+      "latency_ms": 152.84,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 1024,
+      "cached": 32768,
+      "latency_ms": 236.47,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 2048,
+      "cached": 32768,
+      "latency_ms": 373.2,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 4096,
+      "cached": 32768,
+      "latency_ms": 697.25,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 8192,
+      "cached": 32768,
+      "latency_ms": 1372.55,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 16384,
+      "cached": 32768,
+      "latency_ms": 2926.79,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 32768,
+      "cached": 32768,
+      "latency_ms": 6619.32,
+      "cached_tokens_seen": 32768
+    },
+    {
+      "uncached": 32,
+      "cached": 65536,
+      "latency_ms": 75.64,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 128,
+      "cached": 65536,
+      "latency_ms": 97.83,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 512,
+      "cached": 65536,
+      "latency_ms": 244.96,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 1024,
+      "cached": 65536,
+      "latency_ms": 375.15,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 2048,
+      "cached": 65536,
+      "latency_ms": 590.7,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 4096,
+      "cached": 65536,
+      "latency_ms": 1117.76,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 8192,
+      "cached": 65536,
+      "latency_ms": 2127.11,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 16384,
+      "cached": 65536,
+      "latency_ms": 4436.09,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 32768,
+      "cached": 65536,
+      "latency_ms": 9641.01,
+      "cached_tokens_seen": 65536
+    },
+    {
+      "uncached": 32,
+      "cached": 98304,
+      "latency_ms": 91.69,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 128,
+      "cached": 98304,
+      "latency_ms": 128.17,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 512,
+      "cached": 98304,
+      "latency_ms": 355.24,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 1024,
+      "cached": 98304,
+      "latency_ms": 538.57,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 2048,
+      "cached": 98304,
+      "latency_ms": 827.23,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 4096,
+      "cached": 98304,
+      "latency_ms": 1538.11,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 8192,
+      "cached": 98304,
+      "latency_ms": 2881.68,
+      "cached_tokens_seen": 98304
+    },
+    {
+      "uncached": 16384,
+      "cached": 98304,
+      "latency_ms": 5952.93,
+      "cached_tokens_seen": 98304
+    }
+  ]
+}
