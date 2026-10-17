@@ -4081,6 +4081,14 @@ class Scheduler(
             # in the waiting queue.
             return None, running_batch
 
+        # A chunked prefill already started always continues.
+        if (
+            self.policy.mlfq_prefill_gate
+            and self.chunked_req is None
+            and self.policy.mlfq.defers_prefill(self.waiting_queue, running_batch.reqs)
+        ):
+            return None, running_batch
+
         # Determine chunked_prefill_size for this batch
         chunked_prefill_size = self.chunked_prefill_size
         if self.chunked_req is not None and self.dynamic_chunk_sizer is not None:

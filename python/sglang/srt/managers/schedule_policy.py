@@ -206,6 +206,9 @@ class SchedulePolicy:
         self._waiting_prefix_refresh_calls = 0
         self.mlfq = self._init_mlfq()
         self.mlfq_load_ahead = self._init_mlfq_load_ahead()
+        self.mlfq_prefill_gate = get_schedule().sj_mlfq_prefill_gate
+        if self.mlfq_prefill_gate and self.mlfq is None:
+            raise ValueError("--sj-mlfq-prefill-gate requires --schedule-policy sj-mlfq")
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()

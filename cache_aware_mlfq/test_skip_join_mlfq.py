@@ -183,6 +183,19 @@ def test_load_ahead_copies_next_waiting_prefixes():
     assert tree.loaded == [2, 4, 5]
 
 
+def test_prefill_gate():
+    def at(level):
+        return types.SimpleNamespace(mlfq_level=level)
+
+    gate = mlfq_mod.SkipJoinMlfq.defers_prefill
+    running = [at(2), at(7)]
+    assert gate([at(5)], running)          # a level-2 request is mid-answer: decode first
+    assert not gate([at(2)], running)      # as urgent as the most urgent running request
+    assert not gate([at(1), at(9)], running)
+    assert not gate([at(9)], [])           # nothing running: prefill whatever waits
+    assert not gate([], running)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

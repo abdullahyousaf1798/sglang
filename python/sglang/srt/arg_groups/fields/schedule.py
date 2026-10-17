@@ -124,6 +124,13 @@ class Schedule(msgspec.Struct):
         "next waiting requests (in MLFQ order) back to the GPU before they are admitted, "
         "overlapping the copy with other batches (FastServe's proactive swap-in).",
     ] = False
+    sj_mlfq_prefill_gate: A[
+        bool,
+        "With sj-mlfq, run a decode step instead of a new prefill while every running "
+        "request is in a higher-priority queue than the next waiting request, so a long, "
+        "low-priority prefill does not stall more urgent requests mid-answer "
+        "(FastServe's iteration-level preemption). A started chunked prefill continues.",
+    ] = False
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",
