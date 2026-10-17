@@ -51,7 +51,7 @@ LOAD_AHEAD_MAX_TOKENS = 32768
 LOAD_AHEAD_MIN_TOKENS = 256
 LOAD_AHEAD_CANDIDATES = 8
 LOAD_AHEAD_HEADROOM = 0.1
-LOAD_AHEAD_LOG_INTERVAL = 20
+LOAD_AHEAD_LOG_INTERVAL = 1
 
 
 def _interpolate(xs: Sequence[float], ys: Sequence[float], x: float) -> float:

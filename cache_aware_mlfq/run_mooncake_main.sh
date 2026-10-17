@@ -21,18 +21,30 @@ MLFQ="--schedule-policy sj-mlfq --sj-mlfq-profile $PROFILE --enable-priority-sch
 # after finished conversations (4b), and loaded back ahead of admission (5).
 MECHANISMS="--preempt-keep-kv --radix-eviction-policy mlfq --sj-mlfq-load-ahead"
 GATE=--sj-mlfq-prefill-gate
+# The 2x2 behind the two contributions on top of FastServe: placement (prompt =
+# FastServe's, cache-aware) x eviction (SGLang's LRU, two-tier "mlfq"), all with
+# FastServe's own mechanisms ported (kept KV, load-ahead, and optionally the gate).
+#   fastserve-lru        prompt       LRU       (FastServe ported)
+#   ours-lru-eviction    cache-aware  LRU
+#   fastserve            prompt       two-tier
+#   ours                 cache-aware  two-tier
+# and the same four with -gate (fastserve-lru-gate, ours-lru-gate, fastserve-gate, ours-gate).
+PORTED="--preempt-keep-kv --sj-mlfq-load-ahead"
 flags() {
   case $1 in
     fcfs) echo "--schedule-policy fcfs" ;;
     lpm) echo "--schedule-policy lpm" ;;
     shortest-prefill-first) echo "--schedule-policy shortest-prefill-first" ;;
     sj-mlfq-naive) echo "$MLFQ --sj-mlfq-cost prompt" ;;
+    fastserve-lru) echo "$MLFQ --sj-mlfq-cost prompt $PORTED" ;;
+    fastserve-lru-gate) echo "$MLFQ --sj-mlfq-cost prompt $PORTED $GATE" ;;
     fastserve) echo "$MLFQ --sj-mlfq-cost prompt $MECHANISMS" ;;
     fastserve-gate) echo "$MLFQ --sj-mlfq-cost prompt $MECHANISMS $GATE" ;;
+    ours-lru-eviction) echo "$MLFQ --sj-mlfq-cost cache-aware $PORTED" ;;
+    ours-lru-gate) echo "$MLFQ --sj-mlfq-cost cache-aware $PORTED $GATE" ;;
     ours) echo "$MLFQ --sj-mlfq-cost cache-aware $MECHANISMS" ;;
     ours-gate) echo "$MLFQ --sj-mlfq-cost cache-aware $MECHANISMS $GATE" ;;
     ours-no-load-ahead) echo "$MLFQ --sj-mlfq-cost cache-aware --preempt-keep-kv --radix-eviction-policy mlfq" ;;
-    ours-lru-eviction) echo "$MLFQ --sj-mlfq-cost cache-aware --preempt-keep-kv --sj-mlfq-load-ahead" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }

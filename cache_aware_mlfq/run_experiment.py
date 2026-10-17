@@ -197,7 +197,7 @@ def read_cache_counters() -> dict:
 
 
 def read_load_ahead(server_log: Path) -> dict:
-    """Last cumulative load-ahead report in the server log (logged every 20 copies)."""
+    """Last cumulative load-ahead report in the server log (logged after every copy)."""
     reports = re.findall(r"sj-mlfq load-ahead: (\d+) copies, (\d+) tokens", server_log.read_text())
     if not reports:
         return {}
