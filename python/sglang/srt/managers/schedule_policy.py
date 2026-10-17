@@ -47,7 +47,7 @@ from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
     split_cached_prefix_by_tier,
 )
-from sglang.srt.managers.skip_join_mlfq import SkipJoinMlfq
+from sglang.srt.managers.skip_join_mlfq import MlfqLoadAhead, SkipJoinMlfq
 from sglang.srt.mem_cache.allocator.hisparse import (
     DeepSeekV4HiSparseTokenToKVPoolAllocator,
 )
@@ -205,6 +205,7 @@ class SchedulePolicy:
         self._shortest_prefill_calls = 0
         self._waiting_prefix_refresh_calls = 0
         self.mlfq = self._init_mlfq()
+        self.mlfq_load_ahead = self._init_mlfq_load_ahead()
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
@@ -290,11 +291,38 @@ class SchedulePolicy:
                 "and the default higher-values-first priority order"
             )
         schedule = get_schedule()
+        claim_strategy, node_of = None, None
+        if get_memory().radix_eviction_policy.lower() == "mlfq":
+            # Waiting requests' prefixes are claimed by node id (req.last_node).
+            if not isinstance(self.tree_cache, UnifiedRadixCache):
+                raise ValueError(
+                    "--radix-eviction-policy mlfq requires the unified radix cache "
+                    "(e.g. with --enable-hierarchical-cache)"
+                )
+            claim_strategy = self.tree_cache.tree_core.eviction_strategy
+            node_of = self.tree_cache.tree_core.node_by_id
         return SkipJoinMlfq(
             cost_mode=schedule.sj_mlfq_cost,
             profile_path=schedule.sj_mlfq_profile,
             base_quantum_s=schedule.sj_mlfq_base_quantum_ms / 1000,
+            claim_strategy=claim_strategy,
+            node_of=node_of,
         )
+
+    def _init_mlfq_load_ahead(self) -> Optional[MlfqLoadAhead]:
+        if self.mlfq is None or not get_schedule().sj_mlfq_load_ahead:
+            return None
+        if (
+            not isinstance(self.tree_cache, UnifiedRadixCache)
+            or self.tree_cache.cache_controller is None
+            or self.tree_cache.buffer_pipeline is not None
+            or self.tree_cache.linker is not None
+        ):
+            raise ValueError(
+                "--sj-mlfq-load-ahead requires --enable-hierarchical-cache "
+                "without a buffer pipeline or an external cache linker"
+            )
+        return MlfqLoadAhead(tree_cache=self.tree_cache)
 
     def _touch_waiting_prefixes(self, policy: Policy, waiting_queue: List[Req]) -> None:
         # Head last, so LRU evicts in reverse admission order; cache-aware policies

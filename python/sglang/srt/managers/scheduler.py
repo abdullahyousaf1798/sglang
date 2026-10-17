@@ -3952,7 +3952,20 @@ class Scheduler(
             if self.enable_fpm:
                 ret.fpm_start_time = self._fpm_batch_t0
 
+        if self.policy.mlfq_load_ahead is not None:
+            self.policy.mlfq_load_ahead.step(self.waiting_queue)
+
         return NextBatchPlan(batch_to_run=ret, running_batch=running_batch)
+
+    def _start_hicache_loading(self) -> int:
+        """Start the queued HiCache loads; return the layer-counter slot the new prefill waits on."""
+        consumer = self.tree_cache.ready_to_load_host_cache()
+        load_ahead = self.policy.mlfq_load_ahead
+        if consumer < 0 and load_ahead is not None:
+            # Loads share one copy stream, so a load started here already covers
+            # any earlier load-ahead copy; without one, wait on that copy itself.
+            consumer = load_ahead.consumer_index()
+        return consumer
 
     def get_num_allocatable_reqs(
         self,
@@ -4294,9 +4307,7 @@ class Scheduler(
 
         if self.enable_hierarchical_cache or self.enable_unified_cache_external_linker:
             # todo (zhiqiang): disable cuda graph execution if hicache loading triggered
-            new_batch.hicache_consumer_index = (
-                self.tree_cache.ready_to_load_host_cache()
-            )
+            new_batch.hicache_consumer_index = self._start_hicache_loading()
 
         new_batch.prepare_for_extend()
 

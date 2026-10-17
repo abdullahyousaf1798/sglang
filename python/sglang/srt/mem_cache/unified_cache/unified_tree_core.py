@@ -135,6 +135,9 @@ class UnifiedTreeNode:
         self._tlru_history_len = 0
         self.external_cache_stored = False
         self.priority = priority
+        # Set by MlfqTierStrategy.claim; a claim counts only during its step.
+        self.mlfq_claim = 0
+        self.mlfq_claim_step = -1
         self.lru_prev: list[UnifiedTreeNode | None] = [None] * (
             _NUM_COMPONENT_TYPES * 2
         )

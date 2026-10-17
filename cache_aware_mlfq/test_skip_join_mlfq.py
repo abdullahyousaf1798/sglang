@@ -4,7 +4,9 @@
 """
 
 import importlib.util
+import sys
 import time
+import types
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,6 +16,19 @@ _spec = importlib.util.spec_from_file_location(
 )
 mlfq_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mlfq_mod)
+_spec = importlib.util.spec_from_file_location(
+    "evict_policy", HERE.parent / "python/sglang/srt/mem_cache/evict_policy.py"
+)
+evict_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(evict_mod)
+
+
+class FakeNode:
+    def __init__(self, parent, last_access_time):
+        self.parent = parent
+        self.last_access_time = last_access_time
+        self.mlfq_claim = 0
+        self.mlfq_claim_step = -1
 
 
 class FakeReq:
@@ -25,6 +40,7 @@ class FakeReq:
         self.mlfq_service_s = 0.0
         self.mlfq_level_entry_time = 0.0
         self.mlfq_last_service_time = 0.0
+        self.last_node = None
 
 
 def test_cost_model_matches_profile():
@@ -79,6 +95,92 @@ def test_starvation_promotion():
     for _ in range(mlfq_mod.STARVATION_CHECK_INTERVAL):
         q.order(queue)
     assert starved.mlfq_level == 0 and starved.priority == 0
+
+
+def test_two_tier_eviction_order():
+    strategy = evict_mod.MlfqTierStrategy()
+    root = FakeNode(None, 0)
+    shared = FakeNode(root, 1)            # prefix shared by two waiting requests
+    waiting_hi = FakeNode(shared, 2)      # level-1 request's own tail
+    waiting_lo = FakeNode(shared, 3)      # level-4 request's own tail
+    finished_old, finished_new = FakeNode(root, 4), FakeNode(root, 5)
+    nodes = {1: shared, 2: waiting_hi, 3: waiting_lo}
+
+    q = mlfq_mod.SkipJoinMlfq(cost_mode="cache-aware", profile_path=str(PROFILE),
+                              claim_strategy=strategy, node_of=nodes.__getitem__)
+    hi, lo = FakeReq(prompt_len=300), FakeReq(prompt_len=8000)
+    hi.last_node, lo.last_node = 2, 3
+    q.order([hi, lo])
+    assert hi.mlfq_level < lo.mlfq_level
+
+    order = sorted([shared, waiting_hi, waiting_lo, finished_old, finished_new],
+                   key=strategy.get_priority)
+    # Unclaimed (finished) KV first by recency, then claimed KV lowest level first;
+    # the shared prefix is protected at the higher-priority request's level.
+    assert order == [finished_old, finished_new, waiting_lo, shared, waiting_hi]
+    assert shared.mlfq_claim == hi.priority
+
+    strategy.begin_step()  # the next step, with nobody waiting: every claim expires
+    assert all(strategy.get_priority(n)[0] == 0 for n in (shared, waiting_hi, waiting_lo))
+
+
+class FakeHiCacheTree:
+    """The slice of UnifiedRadixCache that MlfqLoadAhead uses; loads finish on ack()."""
+
+    def __init__(self, free_tokens: int):
+        self.ongoing_load_back = {}
+        self.cache_controller = types.SimpleNamespace(ack_load_queue=[])
+        self.token_to_kv_pool_allocator = types.SimpleNamespace(
+            size=100_000, available_size=lambda: free_tokens)
+        self.loaded = []
+
+    def evictable_size(self):
+        return 0
+
+    def init_load_back(self, params):
+        self.loaded.append(params.best_match_node)
+        self.ongoing_load_back[params.best_match_node] = True
+        return params.host_hit_length, params.best_match_node
+
+    def ready_to_load_host_cache(self):
+        return 2  # the layer-counter slot the copy was started in
+
+    def ack(self):
+        self.ongoing_load_back.clear()
+
+
+def _install_fake_sglang_helpers():
+    """MlfqLoadAhead imports SGLang's load-back params and prefix matcher lazily."""
+    base = types.ModuleType("sglang.srt.mem_cache.base_prefix_cache")
+    base.InitLoadBackParams = lambda **kw: types.SimpleNamespace(**kw)
+    common = types.ModuleType("sglang.srt.mem_cache.common")
+    common.match_kv_cache = lambda req, tree: None  # host_hit_length is preset below
+    sys.modules[base.__name__], sys.modules[common.__name__] = base, common
+
+
+def test_load_ahead_copies_next_waiting_prefixes():
+    _install_fake_sglang_helpers()
+    tree = FakeHiCacheTree(free_tokens=60_000)  # budget: min(32768, 60000 - 10% of pool)
+    ahead = mlfq_mod.MlfqLoadAhead(tree_cache=tree)
+
+    def waiting(node, host_hit):
+        return types.SimpleNamespace(best_match_node=node, host_hit_length=host_hit)
+
+    # In MLFQ order: on the GPU already, two CPU-only prefixes, one too small to
+    # be worth it, then one that would push the copy past its 32k-token cap.
+    queue = [waiting(1, 0), waiting(2, 12_000), waiting(3, 100), waiting(4, 16_000),
+             waiting(5, 8_000), waiting(6, 1_000)]
+    ahead.step(queue)
+    assert tree.loaded == [2, 4]  # in waiting order, stopping at the first that does not fit
+    assert ahead.consumer_index() == 2  # a prefill admitted now must wait on the copy
+
+    ahead.step(queue)  # one copy at a time
+    assert tree.loaded == [2, 4]
+
+    tree.ack()
+    assert ahead.consumer_index() == -1
+    ahead.step([waiting(5, 8_000)])
+    assert tree.loaded == [2, 4, 5]
 
 
 if __name__ == "__main__":

@@ -118,6 +118,12 @@ class Schedule(msgspec.Struct):
         "Quantum of sj-mlfq's top level in milliseconds; each lower level doubles it. "
         "FastServe used 10 ms; it should track the hardware's iteration time.",
     ] = 10.0
+    sj_mlfq_load_ahead: A[
+        bool,
+        "With sj-mlfq and --enable-hierarchical-cache, copy the CPU-cached prefixes of the "
+        "next waiting requests (in MLFQ order) back to the GPU before they are admitted, "
+        "overlapping the copy with other batches (FastServe's proactive swap-in).",
+    ] = False
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",

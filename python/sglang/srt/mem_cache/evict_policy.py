@@ -46,6 +46,37 @@ class PriorityStrategy(EvictionStrategy):
         return (node.priority, node.last_access_time)
 
 
+class MlfqTierStrategy(EvictionStrategy):
+    """Two-tier eviction for ``--schedule-policy sj-mlfq``.
+
+    Each scheduling step the MLFQ policy calls ``begin_step`` and then ``claim`` for
+    every node on a waiting (or preempted) request's cached prefix, with that
+    request's priority (-level). Tier 1, evicted first and least recently used
+    first, is everything unclaimed this step: KV no waiting request needs, such as
+    finished conversations. Tier 2 is claimed KV, lowest priority (largest MLFQ
+    level) first, which is FastServe's swap-out order with the level standing in
+    for its estimated next scheduled time. Claims expire when the step advances.
+    """
+
+    def __init__(self):
+        self._step = 0
+
+    def begin_step(self) -> None:
+        self._step += 1
+
+    def claim(self, node: TreeNode, priority: int) -> None:
+        if node.mlfq_claim_step != self._step:
+            node.mlfq_claim_step = self._step
+            node.mlfq_claim = priority
+        elif priority > node.mlfq_claim:
+            node.mlfq_claim = priority
+
+    def get_priority(self, node: TreeNode) -> Tuple[int, int, float]:
+        if node.mlfq_claim_step == self._step:
+            return (1, node.mlfq_claim, node.last_access_time)
+        return (0, 0, node.last_access_time)
+
+
 class TLRUStrategy(EvictionStrategy):
     """Tail-Optimized LRU (Zhang et al., arXiv:2510.15152).
 

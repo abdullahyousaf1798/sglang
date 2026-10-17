@@ -266,6 +266,9 @@ class TreeNode:
         self.event_hash_value: Optional[List[str]] = None
         # priority for priority-aware eviction
         self.priority = priority
+        # Set by MlfqTierStrategy.claim; a claim counts only during its step.
+        self.mlfq_claim = 0
+        self.mlfq_claim_step = -1
 
         self.id = TreeNode.counter if id is None else id
         TreeNode.counter += 1
