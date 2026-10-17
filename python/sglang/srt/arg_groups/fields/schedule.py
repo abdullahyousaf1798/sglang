@@ -113,6 +113,11 @@ class Schedule(msgspec.Struct):
         "Prefill latency profile (JSON from cache_aware_mlfq/profile_prefill.py) that sj-mlfq "
         "uses to predict first-iteration time. Required with --schedule-policy sj-mlfq.",
     ] = None
+    sj_mlfq_base_quantum_ms: A[
+        float,
+        "Quantum of sj-mlfq's top level in milliseconds; each lower level doubles it. "
+        "FastServe used 10 ms; it should track the hardware's iteration time.",
+    ] = 10.0
     enable_priority_scheduling: A[
         bool,
         "Enable priority scheduling. Requests with higher priority integer values will be scheduled first by default.",

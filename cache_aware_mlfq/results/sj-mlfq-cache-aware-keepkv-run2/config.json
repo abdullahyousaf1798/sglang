@@ -1,0 +1,41 @@
+{
+  "name": "sj-mlfq-cache-aware-keepkv-run2",
+  "started_at": "2026-10-17T06:19:26Z",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--max-total-tokens",
+    "24576",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "30",
+    "--enable-metrics",
+    "--schedule-policy",
+    "sj-mlfq",
+    "--sj-mlfq-profile",
+    "/opt/sglang/cache_aware_mlfq/prefill_profile_4090.json",
+    "--sj-mlfq-cost",
+    "cache-aware",
+    "--enable-priority-scheduling",
+    "--retraction-policy",
+    "priority",
+    "--preempt-keep-kv",
+    "--priority-scheduling-preemption-threshold",
+    "0"
+  ],
+  "workload": {
+    "num-clients": 64,
+    "num-rounds": 6,
+    "request-length": 1024,
+    "output-length": 256,
+    "range-ratio": 0.25,
+    "max-parallel": 64,
+    "request-rate": 2.0,
+    "seed": 1
+  }
+}

@@ -170,3 +170,36 @@ Levels assigned at placement:
 - **The mechanism works.** 218 preemptions cost 218 recomputed tokens, one per resume (the newest token). Everything else came back from the GPU or CPU cache.
 - **Latency did not improve.** Mean job completion time and TTFT are slightly worse, while p99 and TPOT are slightly better. Single runs, so differences of about 1 s may be noise.
 - **The cause is that recompute was never the bottleneck.** About 20k recomputed tokens cost about 2 s of GPU time over a 5-minute run. The dominant cost is churn: about 3,000 demotions and more than 200 preemptions. With FastServe's 10 ms base quantum and roughly 25 ms decode steps here, a request is demoted every few steps. Each new arrival then outranks, and preempts, a request partway through decoding.
+
+## Step 4 sweep: preemption threshold, base quantum, and run-to-run noise
+
+**What changed:**
+- **`skip_join_mlfq.py`:** the base quantum is now a constructor argument (default: FastServe's 10 ms).
+- **New flag:** `--sj-mlfq-base-quantum-ms`.
+- **New script:** `run_step4_sweep.sh`, which runs the five rows below.
+
+Every MLFQ row uses cache-aware placement with preempted KV kept.
+
+**Why these knobs:**
+- **The preemption threshold** sets how many levels better a waiting request must be before it can push out a running one. With threshold 0, any newcomer evicts a request that has used up even its first quantum.
+- **The base quantum matters less than it first appears.** Skip-join gives a request the smallest quantum that covers its prefill, whatever the base. A typical 90 ms prefill starts with a 160 ms quantum at a base of 10, 40 or 160 ms, then doubles on the same schedule. The base mostly renumbers the levels.
+
+**Results** (one run each):
+
+| Run | Job completion, mean (s) | Job completion, p99 (s) | TTFT, mean (s) | TTFT, p99 (s) | TPOT, mean (ms) | Throughput (req/s) | Preempted or retracted | Demotions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fcfs | 14.84 | 40.69 | 11.19 | 36.51 | 22.9 | 1.51 | 0 | n/a |
+| fcfs-run2 | 14.42 | 38.00 | 10.79 | 33.89 | 22.8 | 1.50 | 0 | n/a |
+| lpm | 12.18 | 119.23 | 8.56 | 115.24 | 22.7 | 1.49 | 0 | n/a |
+| keepkv (threshold 0) | 14.03 | 60.29 | 3.88 | 27.60 | 61.3 | 1.63 | 218 | about 3,000 |
+| keepkv-run2 (threshold 0) | 16.29 | 70.42 | 3.79 | 24.19 | 74.7 | 1.62 | 292 | 3,277 |
+| keepkv-q40 (threshold 0, 40 ms base) | 15.34 | 61.22 | 4.54 | 26.68 | 62.4 | 1.62 | 252 | 2,797 |
+| keepkv-gap1 (threshold 1) | 13.12 | 55.45 | 2.52 | 22.34 | 65.8 | 1.58 | 206 | 2,772 |
+| keepkv-gap2 (threshold 2) | 13.78 | 59.55 | 4.95 | 29.04 | 53.2 | 1.64 | 198 | 2,707 |
+
+**Reading:**
+- **MLFQ is much noisier than fcfs.** Repeats of fcfs differ by 3% in mean job completion time, while repeats of the same MLFQ configuration differ by 15% (14.0 vs 16.3 s). Preemption dynamics amplify small timing differences. Gaps of about 2 s between MLFQ variants are within noise, so the blog needs at least 3 repeats per configuration.
+- **The base quantum barely matters, as predicted.** At 40 ms, placement shifts to levels 0-2, but demotions and latency stay within noise.
+- **The threshold trades as expected, with small effects.** Threshold 2 trades first-token latency (4.95 s) for decode speed (53 ms per token). Threshold 1 gives the best MLFQ numbers in this sweep, but within noise.
+- **On this synthetic workload, no MLFQ setting reliably beats lpm on mean job completion time.** Every setting does cut mean TTFT by 55-77% against fcfs and lpm, and roughly halves lpm's p99. Each also decodes 2-3x slower per token than fcfs.
+- **Next:** this workload's output lengths are uniform (64-256 tokens), which is where MLFQ's least-attained-service ordering helps least. The next step moves the main workload to real ShareGPT conversations, with heavy-tailed answer lengths, as in FastServe's own evaluation.

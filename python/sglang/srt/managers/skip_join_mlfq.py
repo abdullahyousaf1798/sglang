@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 # FastServe's settings (Wu et al., arXiv:2305.05920): a 10 ms base quantum that
 # doubles per level, and promotion after 3 s without service, checked every
-# 1000 scheduling steps.
-BASE_QUANTUM_S = 0.010
+# 1000 scheduling steps. The base quantum is tunable because it should track the
+# hardware's iteration time; FastServe's 10 ms is the default.
+DEFAULT_BASE_QUANTUM_S = 0.010
 QUANTUM_MULTIPLIER = 2.0
 STARVATION_S = 3.0
 STARVATION_CHECK_INTERVAL = 1000
@@ -76,11 +77,20 @@ class PrefillCostModel:
 class SkipJoinMlfq:
     """Queue levels, demotion and starvation promotion for ``--schedule-policy sj-mlfq``."""
 
-    def __init__(self, *, cost_mode: str, profile_path: Optional[str]):
+    def __init__(
+        self,
+        *,
+        cost_mode: str,
+        profile_path: Optional[str],
+        base_quantum_s: float = DEFAULT_BASE_QUANTUM_S,
+    ):
         if cost_mode not in COST_MODES:
             raise ValueError(f"--sj-mlfq-cost must be one of {COST_MODES}, got {cost_mode!r}")
         if profile_path is None:
             raise ValueError("--schedule-policy sj-mlfq requires --sj-mlfq-profile")
+        if base_quantum_s <= 0:
+            raise ValueError(f"--sj-mlfq-base-quantum-ms must be positive, got {base_quantum_s * 1000}")
+        self._base_quantum_s = base_quantum_s
         self._cache_aware = cost_mode == "cache-aware"
         self._cost_model = PrefillCostModel(profile_path)
         self._steps = 0
@@ -122,9 +132,8 @@ class SkipJoinMlfq:
                 req.mlfq_level_entry_time = now
                 self._demotions += 1
 
-    @staticmethod
-    def quantum_s(level: int) -> float:
-        return BASE_QUANTUM_S * QUANTUM_MULTIPLIER**level
+    def quantum_s(self, level: int) -> float:
+        return self._base_quantum_s * QUANTUM_MULTIPLIER**level
 
     def _place(self, req: Req, now: float) -> None:
         prompt_len = len(req.origin_input_ids)
@@ -135,8 +144,8 @@ class SkipJoinMlfq:
         else:
             cost_s = self._cost_model.predict_s(uncached=prompt_len, cached=0)
         level = 0
-        if cost_s > BASE_QUANTUM_S:
-            level = math.ceil(math.log(cost_s / BASE_QUANTUM_S, QUANTUM_MULTIPLIER))
+        if cost_s > self._base_quantum_s:
+            level = math.ceil(math.log(cost_s / self._base_quantum_s, QUANTUM_MULTIPLIER))
         self._set_level(req, level)
         req.mlfq_level_entry_time = now
         req.mlfq_last_service_time = now

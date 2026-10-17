@@ -291,7 +291,9 @@ class SchedulePolicy:
             )
         schedule = get_schedule()
         return SkipJoinMlfq(
-            cost_mode=schedule.sj_mlfq_cost, profile_path=schedule.sj_mlfq_profile
+            cost_mode=schedule.sj_mlfq_cost,
+            profile_path=schedule.sj_mlfq_profile,
+            base_quantum_s=schedule.sj_mlfq_base_quantum_ms / 1000,
         )
 
     def _touch_waiting_prefixes(self, policy: Policy, waiting_queue: List[Req]) -> None:
