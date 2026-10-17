@@ -22,8 +22,15 @@ COLUMNS = [
     ("Prompt tokens from GPU cache", lambda s, c: share(c, "device_hit")),
     ("Prompt tokens from CPU cache", lambda s, c: share(c, "host_hit")),
     ("Preempted or retracted", lambda s, c: f"{c.get('retracted_requests', 0):.0f}"),
-    ("Decoded tokens recomputed", lambda s, c: f"{c.get('retracted_output_tokens', 0):.0f}"),
+    ("Decoded tokens at preemption", lambda s, c: f"{c.get('retracted_output_tokens', 0):.0f}"),
+    ("Prefill tokens recomputed after preemption", lambda s, c: recomputed(c)),
 ]
+
+
+def recomputed(counters: dict) -> str:
+    if "prefill_compute_tokens_all" not in counters:
+        return "-"  # recorded from step 4a on
+    return f"{counters['prefill_compute_tokens_all'] - counters.get('prefill_tokens_input', 0):.0f}"
 
 
 def share(counters: dict, mode: str) -> str:

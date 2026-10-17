@@ -2310,8 +2310,9 @@ def release_req(
             token_to_kv_pool_allocator,
             get_disagg().disaggregation_decode_retraction_backup,
         )
-    # TODO (csy): for preempted requests, we may want to insert into the tree
-    release_kv_cache(req, tree_cache, checkpoint=False)
+    # With --preempt-keep-kv the request's KV, decoded tokens included, stays in the
+    # tree as a cached prefix, so it resumes from the cache instead of recomputing.
+    release_kv_cache(req, tree_cache, checkpoint=get_schedule().preempt_keep_kv)
     # NOTE(lsyin): we should use the newly evictable memory instantly.
     num_tokens = remaing_req_count * envs.SGLANG_RETRACT_DECODE_STEPS.get()
     evict_from_tree_cache(tree_cache, num_tokens)

@@ -81,6 +81,12 @@ def read_cache_counters() -> dict:
     ]:
         values = re.findall(rf"{metric}\{{[^}}]*\}} ([0-9.e+]+)", text)
         counters[key] = sum(float(v) for v in values)
+    # All prefill compute, including requests prefilled again after preemption or
+    # retraction; prefill_tokens_input above counts first attempts only.
+    values = re.findall(
+        r'sglang:realtime_tokens_total\{[^}]*mode="prefill_compute"[^}]*\} ([0-9.e+]+)', text
+    )
+    counters["prefill_compute_tokens_all"] = sum(float(v) for v in values)
     return counters
 
 

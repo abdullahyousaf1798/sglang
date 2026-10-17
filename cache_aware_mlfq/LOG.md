@@ -143,3 +143,30 @@ Levels assigned at placement:
 - **Against fcfs, cache-aware SJ-MLFQ's main win is first-token latency.** Time to first token drops 78% (11.19 to 2.49 s) and mean job completion time drops 13%. Against lpm, the best baseline mean, it roughly halves the p99 (65 vs 119 s).
 - **The cost is decode speed.** Per-token decode time is about 3x fcfs, and the p99 is above fcfs. Both come from preemption throwing away decoded KV: about 20k of roughly 61k generated tokens were recomputed. That is the cost FastServe avoids by swapping instead of discarding, and the cost Step 4 removes.
 - **Caveat:** single runs. Step 6 repeats them.
+
+## Step 4a: keep preempted KV
+
+**What changed** (3 SGLang lines plus a flag):
+- **`managers/schedule_batch.py`, `release_req`.** This is the only place a preempted or retracted request gives up its KV. With `--preempt-keep-kv`, it now checkpoints that KV into the radix tree instead of freeing it. This resolves a TODO that was already in the code ("for preempted requests, we may want to insert into the tree").
+
+    ```python
+    # before
+    release_kv_cache(req, tree_cache, checkpoint=False)
+    # after
+    release_kv_cache(req, tree_cache, checkpoint=get_schedule().preempt_keep_kv)
+    ```
+
+    The preempted request's prompt and decoded tokens become an unlocked cached prefix. Under pressure, HiCache moves it to CPU memory rather than deleting it, which is FastServe's swap-out. When the request returns, its prefix match finds all of it.
+- **Harness.** It now records all prefill compute (`sglang:realtime_tokens_total{mode="prefill_compute"}`). Subtracting first-attempt compute gives the tokens re-prefilled after preemption.
+
+**Results** (one run):
+
+| Run | Job completion, mean (s) | Job completion, p99 (s) | TTFT, mean (s) | TTFT, p99 (s) | TPOT, mean (ms) | Throughput (req/s) | Preempted or retracted | Decoded tokens at preemption | Prefill tokens recomputed after preemption |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| sj-mlfq-cache-aware | 12.96 | 64.95 | 2.49 | 25.32 | 65.1 | 1.60 | 233 | 20,435 | not recorded (about 20k) |
+| sj-mlfq-cache-aware-keepkv | 14.03 | 60.29 | 3.88 | 27.60 | 61.3 | 1.63 | 218 | 19,576 | 218 |
+
+**Reading:**
+- **The mechanism works.** 218 preemptions cost 218 recomputed tokens, one per resume (the newest token). Everything else came back from the GPU or CPU cache.
+- **Latency did not improve.** Mean job completion time and TTFT are slightly worse, while p99 and TPOT are slightly better. Single runs, so differences of about 1 s may be noise.
+- **The cause is that recompute was never the bottleneck.** About 20k recomputed tokens cost about 2 s of GPU time over a 5-minute run. The dominant cost is churn: about 3,000 demotions and more than 200 preemptions. With FastServe's 10 ms base quantum and roughly 25 ms decode steps here, a request is demoted every few steps. Each new arrival then outranks, and preempts, a request partway through decoding.
