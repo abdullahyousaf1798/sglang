@@ -42,6 +42,39 @@ SERVER_ARGS = [
     "--enable-metrics",
 ]
 
+# Mooncake rows run on an A100 80 GB with the KV pool at whatever fits, as deployed.
+# Trace prompts reach 126k tokens, past Qwen3-8B's native 32k (40k positions), so
+# the server uses Qwen3's documented YaRN extension to 131k. SGLang derives the
+# context length from max_position_embeddings alone when the YaRN config names the
+# original length, so that is raised to match.
+MOONCAKE_SERVER_ARGS = [
+    "--model-path", MODEL,
+    "--port", str(PORT),
+    "--mem-fraction-static", "0.88",
+    "--context-length", "131072",
+    "--json-model-override-args", json.dumps({
+        "max_position_embeddings": 131072,
+        "rope_scaling": {"rope_type": "yarn", "factor": 4.0,
+                         "original_max_position_embeddings": 32768}}),
+    "--enable-hierarchical-cache",
+    "--hicache-size", "80",  # fits both pods (125 and 251 GB of host RAM)
+    "--enable-metrics",
+]
+
+
+def server_args(workload_name: str) -> list:
+    return MOONCAKE_SERVER_ARGS if workload_name == "mooncake" else SERVER_ARGS
+
+
+# A window of a Mooncake trace (mooncake_replay.py), replayed at its own arrival
+# times stretched by "slowdown"; every request's prompt and output length are real.
+MOONCAKE_WORKLOAD = {
+    "trace": "/workspace/data/mooncake_toolagent.jsonl",
+    "start-min": 0.0,
+    "minutes": 2.0,
+    "slowdown": 4.0,
+}
+
 # 64 conversations x 6 turns. Each turn adds 256-1024 new tokens and gets a
 # 64-256 token answer, so contexts grow to several thousand tokens and together
 # far exceed the 24k-token GPU pool.
@@ -70,7 +103,13 @@ CHAT_REQUEST_BODY = '{"chat_template_kwargs": {"enable_thinking": false}}'
 
 
 def bench_command(workload_name: str, workload: dict, out: Path, tag: str) -> list:
-    if workload_name == "sharegpt":
+    if workload_name == "mooncake":
+        cmd = [
+            sys.executable, "cache_aware_mlfq/mooncake_replay.py", "--port", str(PORT),
+            "--output-file", str(out / "bench.jsonl"),
+            "--requests-file", str(out / "requests.jsonl"),
+        ]
+    elif workload_name == "sharegpt":
         cmd = [
             sys.executable, "benchmark/hicache/bench_serving.py",
             "--backend", "sglang", "--port", str(PORT), "--model", MODEL,
@@ -91,9 +130,9 @@ def bench_command(workload_name: str, workload: dict, out: Path, tag: str) -> li
 
 
 def normalize_summary(workload_name: str, raw: dict) -> dict:
-    """Both clients' results in one shape: seconds, under "summary", as make_table reads."""
+    """Every client's results in one shape: seconds, under "summary", as make_table reads."""
     if workload_name != "sharegpt":
-        return raw
+        return raw  # bench_multiturn and mooncake_replay already write this shape
     return {
         "summary": {
             "total_requests": raw["completed"],
@@ -157,13 +196,27 @@ def read_cache_counters() -> dict:
     return counters
 
 
+def read_load_ahead(server_log: Path) -> dict:
+    """Last cumulative load-ahead report in the server log (logged every 20 copies)."""
+    reports = re.findall(r"sj-mlfq load-ahead: (\d+) copies, (\d+) tokens", server_log.read_text())
+    if not reports:
+        return {}
+    copies, tokens = reports[-1]
+    return {"load_ahead_copies": int(copies), "load_ahead_tokens": int(tokens)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True, help="results folder name, e.g. fcfs")
-    parser.add_argument("--workload", choices=["synthetic", "sharegpt"], default="synthetic")
+    parser.add_argument("--workload", choices=["synthetic", "sharegpt", "mooncake"],
+                        default="synthetic")
     parser.add_argument("--request-rate", type=float, help="requests per second")
     parser.add_argument("--seed", type=int, help="client seed; vary it across repeats")
     parser.add_argument("--num-conversations", type=int, help="sharegpt only")
+    parser.add_argument("--trace", help="mooncake only: trace file")
+    parser.add_argument("--start-min", type=float, help="mooncake only: window start (trace minutes)")
+    parser.add_argument("--minutes", type=float, help="mooncake only: window length (trace minutes)")
+    parser.add_argument("--slowdown", type=float, help="mooncake only: arrival-time stretch")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("server_flags", nargs=argparse.REMAINDER,
                         help="scheduling flags after --, e.g. -- --schedule-policy lpm")
@@ -176,27 +229,36 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "bench.jsonl").unlink(missing_ok=True)
 
-    workload = dict(SHAREGPT_WORKLOAD if args.workload == "sharegpt" else SYNTHETIC_WORKLOAD)
-    if args.request_rate is not None:
-        workload["request-rate"] = args.request_rate
-    if args.seed is not None:
-        workload["seed"] = args.seed
-    if args.num_conversations is not None:
-        workload["num-prompts"] = args.num_conversations
+    workload = dict({"sharegpt": SHAREGPT_WORKLOAD, "mooncake": MOONCAKE_WORKLOAD}.get(
+        args.workload, SYNTHETIC_WORKLOAD))
+    overrides = {
+        "request-rate": args.request_rate,
+        "seed": args.seed,
+        "num-prompts": args.num_conversations,
+        "trace": args.trace,
+        "start-min": args.start_min,
+        "minutes": args.minutes,
+        "slowdown": args.slowdown,
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            if key not in workload:
+                sys.exit(f"--{key} does not apply to the {args.workload} workload")
+            workload[key] = value
     config = {
         "name": args.name,
         "workload_name": args.workload,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gpu": subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                               capture_output=True, text=True).stdout.strip(),
-        "server_args": SERVER_ARGS + server_flags,
+        "server_args": server_args(args.workload) + server_flags,
         "workload": workload,
     }
     (out / "config.json").write_text(json.dumps(config, indent=2))
 
     with open(out / "server.log", "w") as server_log:
         server = subprocess.Popen(
-            [sys.executable, "-m", "sglang.launch_server", *SERVER_ARGS, *server_flags],
+            [sys.executable, "-m", "sglang.launch_server", *server_args(args.workload), *server_flags],
             stdout=server_log, stderr=subprocess.STDOUT, cwd=REPO,
         )
         try:
@@ -218,7 +280,7 @@ def main() -> None:
             raw = json.loads((out / "bench.jsonl").read_text().splitlines()[-1])
             summary = normalize_summary(args.workload, raw)
             summary["wall_time_s"] = time.time() - started
-            summary["server_counters"] = read_cache_counters()
+            summary["server_counters"] = read_cache_counters() | read_load_ahead(out / "server.log")
             (out / "summary.json").write_text(json.dumps(summary, indent=2))
             print(f"done: {out}")
         finally:

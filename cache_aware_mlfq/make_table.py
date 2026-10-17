@@ -57,6 +57,23 @@ MEAN_COLUMNS = [
 ]
 
 
+# Mooncake runs (mooncake_replay.py) also report the median and FastServe's metric,
+# end-to-end latency divided by output length.
+MOONCAKE_MEAN_COLUMNS = [
+    ("Job completion, mean (s)", lambda s, c: s["average_latency"]),
+    ("Job completion, p50 (s)", lambda s, c: s["p50_latency"]),
+    ("Job completion, p99 (s)", lambda s, c: s["p99_latency"]),
+    ("TTFT, mean (s)", lambda s, c: s["average_ttft"]),
+    ("TTFT, p99 (s)", lambda s, c: s["p99_ttft"]),
+    ("TPOT, mean (ms)", lambda s, c: s["average_tpot"] * 1000),
+    ("Per-token latency, mean (ms)", lambda s, c: s["average_per_token_latency"] * 1000),
+    ("Throughput (req/s)", lambda s, c: s["throughput"]),
+    ("Preempted or retracted", lambda s, c: c.get("retracted_requests", 0)),
+    ("Load-back copy time, total (s)", lambda s, c: c.get("load_back_seconds", 0)),
+    ("Loaded ahead (k tokens)", lambda s, c: c.get("load_ahead_tokens", 0) / 1000),
+]
+
+
 def fraction(counters: dict, mode: str) -> float:
     total = sum(counters.get(f"prefill_tokens_{m}", 0) for m in ("input", "device_hit", "host_hit"))
     return counters.get(f"prefill_tokens_{mode}", 0) / total if total else 0.0
@@ -68,11 +85,12 @@ def mean_table(results: Path, prefix: str) -> None:
         match = re.fullmatch(rf"{re.escape(prefix)}(.+)-s(\d+)", path.name)
         if match and (path / "summary.json").exists():
             groups.setdefault(match.group(1), []).append(json.loads((path / "summary.json").read_text()))
-    print("| Config | Seeds | " + " | ".join(h for h, _ in MEAN_COLUMNS) + " |")
-    print("| --- | --- |" + " --- |" * len(MEAN_COLUMNS))
+    columns = MOONCAKE_MEAN_COLUMNS if prefix.startswith("mooncake") else MEAN_COLUMNS
+    print("| Config | Seeds | " + " | ".join(h for h, _ in columns) + " |")
+    print("| --- | --- |" + " --- |" * len(columns))
     for config, runs in groups.items():
         cells = []
-        for _, metric in MEAN_COLUMNS:
+        for _, metric in columns:
             values = [metric(r["summary"], r.get("server_counters", {})) for r in runs]
             spread = statistics.stdev(values) if len(values) > 1 else 0.0
             cells.append(f"{statistics.mean(values):.2f} ± {spread:.2f}")

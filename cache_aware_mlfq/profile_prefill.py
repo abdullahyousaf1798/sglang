@@ -8,6 +8,7 @@ with the same server setup as the benchmark rows, and writes the table to
 cache_aware_mlfq/prefill_profile_<gpu>.json.
 """
 
+import argparse
 import json
 import random
 import statistics
@@ -18,11 +19,17 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from run_experiment import PORT, SERVER_ARGS, wait_for_server
+from run_experiment import PORT, server_args, wait_for_server
 
-UNCACHED = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-CACHED = [0, 1024, 2048, 4096, 8192, 16384]
-MAX_TOTAL = 24000  # stays under the 24576-token GPU pool
+# Per workload's server setup: (uncached grid, cached grid, max tokens per request).
+GRIDS = {
+    # RTX 4090 rows: stays under the 24576-token GPU pool.
+    "sharegpt": ([32, 64, 128, 256, 512, 1024, 2048, 4096, 8192],
+                 [0, 1024, 2048, 4096, 8192, 16384], 24000),
+    # A100 Mooncake rows: trace prompts reach 126k tokens; stays under the 131k context.
+    "mooncake": ([32, 128, 512, 1024, 2048, 4096, 8192, 16384, 32768],
+                 [0, 2048, 8192, 16384, 32768, 65536, 98304], 130000),
+}
 REPEATS = 3
 # Ordinary Qwen3 vocabulary ids; special tokens start at 151643.
 TOKEN_RANGE = (1000, 150000)
@@ -64,11 +71,16 @@ def timed_ms(input_ids: list) -> tuple:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--workload", choices=sorted(GRIDS), default="sharegpt")
+    workload = parser.parse_args().workload
+    uncached_grid, cached_grid, max_total = GRIDS[workload]
+    args = server_args(workload)
     random.seed(0)
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                          capture_output=True, text=True).stdout.strip()
     log = open("/workspace/logs/profile_prefill_server.log", "w")
-    server = subprocess.Popen([sys.executable, "-m", "sglang.launch_server", *SERVER_ARGS],
+    server = subprocess.Popen([sys.executable, "-m", "sglang.launch_server", *args],
                               stdout=log, stderr=subprocess.STDOUT)
     try:
         wait_for_server(server, timeout_s=900)
@@ -77,9 +89,9 @@ def main() -> None:
         overhead_ms = statistics.median(timed_ms(random_tokens(1))[0] for _ in range(10))
 
         cells = []
-        for cached in CACHED:
-            for uncached in UNCACHED:
-                if cached + uncached > MAX_TOTAL:
+        for cached in cached_grid:
+            for uncached in uncached_grid:
+                if cached + uncached > max_total:
                     continue
                 flush_cache()
                 prefix = random_tokens(cached)
@@ -93,7 +105,8 @@ def main() -> None:
                 print(f"cached={cached:6d} uncached={uncached:5d} -> {latency:8.1f} ms "
                       f"(server saw {hit} cached)", flush=True)
 
-        table = {"gpu": gpu, "model": SERVER_ARGS[SERVER_ARGS.index("--model-path") + 1],
+        table = {"gpu": gpu, "model": args[args.index("--model-path") + 1],
+                 "server_args": args,
                  "request_overhead_ms": round(overhead_ms, 2), "cells": cells}
         out = Path(__file__).resolve().parent / f"prefill_profile_{gpu.split()[-1].lower()}.json"
         out.write_text(json.dumps(table, indent=2))
