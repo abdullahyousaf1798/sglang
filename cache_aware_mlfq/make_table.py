@@ -1,11 +1,16 @@
 """Combine benchmark runs into one comparison table (Markdown).
 
     python cache_aware_mlfq/make_table.py [results_dir] [run ...]
+    python cache_aware_mlfq/make_table.py --mean [results_dir] [prefix]
 
 Without run names, every folder in results_dir that has a summary.json is included.
+With --mean, runs named <config>-s<seed> are grouped by config and shown as
+mean ± standard deviation over seeds; prefix (e.g. sharegpt-) selects the runs.
 """
 
 import json
+import re
+import statistics
 import sys
 from pathlib import Path
 
@@ -38,7 +43,47 @@ def share(counters: dict, mode: str) -> str:
     return f"{counters.get(f'prefill_tokens_{mode}', 0) / total:.0%}" if total else "-"
 
 
+MEAN_COLUMNS = [
+    # header, function of (summary, counters) -> number
+    ("Job completion, mean (s)", lambda s, c: s["average_latency"]),
+    ("Job completion, p99 (s)", lambda s, c: s["p99_latency"]),
+    ("TTFT, mean (s)", lambda s, c: s["average_ttft"]),
+    ("TTFT, p99 (s)", lambda s, c: s["p99_ttft"]),
+    ("TPOT, mean (ms)", lambda s, c: s["average_tpot"] * 1000),
+    ("Throughput (req/s)", lambda s, c: s["throughput"]),
+    ("Prompt tokens from CPU cache (%)", lambda s, c: 100 * fraction(c, "host_hit")),
+    ("Preempted or retracted", lambda s, c: c.get("retracted_requests", 0)),
+    ("Load-back copy time, total (s)", lambda s, c: c.get("load_back_seconds", 0)),
+]
+
+
+def fraction(counters: dict, mode: str) -> float:
+    total = sum(counters.get(f"prefill_tokens_{m}", 0) for m in ("input", "device_hit", "host_hit"))
+    return counters.get(f"prefill_tokens_{mode}", 0) / total if total else 0.0
+
+
+def mean_table(results: Path, prefix: str) -> None:
+    groups: dict = {}
+    for path in sorted(results.iterdir()):
+        match = re.fullmatch(rf"{re.escape(prefix)}(.+)-s(\d+)", path.name)
+        if match and (path / "summary.json").exists():
+            groups.setdefault(match.group(1), []).append(json.loads((path / "summary.json").read_text()))
+    print("| Config | Seeds | " + " | ".join(h for h, _ in MEAN_COLUMNS) + " |")
+    print("| --- | --- |" + " --- |" * len(MEAN_COLUMNS))
+    for config, runs in groups.items():
+        cells = []
+        for _, metric in MEAN_COLUMNS:
+            values = [metric(r["summary"], r.get("server_counters", {})) for r in runs]
+            spread = statistics.stdev(values) if len(values) > 1 else 0.0
+            cells.append(f"{statistics.mean(values):.2f} ± {spread:.2f}")
+        print(f"| {config} | {len(runs)} | " + " | ".join(cells) + " |")
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--mean":
+        results = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_RESULTS
+        mean_table(results, sys.argv[3] if len(sys.argv) > 3 else "")
+        return
     results = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_RESULTS
     names = sys.argv[2:] or sorted(p.name for p in results.iterdir() if (p / "summary.json").exists())
     print("| Run | " + " | ".join(h for h, _ in COLUMNS) + " |")

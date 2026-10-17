@@ -1,11 +1,18 @@
 """Run one benchmark configuration on the pod and save its results.
 
 Starts an SGLang server with the shared server setup plus this run's scheduling
-flags, waits until it is ready, runs SGLang's multi-turn chat client against it,
+flags, waits until it is ready, runs a multi-turn chat workload against it,
 then records the client's summary and the server's cache counters under
 /workspace/results/<name>/ and stops the server.
 
-    python cache_aware_mlfq/run_experiment.py --name fcfs -- --schedule-policy fcfs
+Workloads:
+  sharegpt   real multi-turn ShareGPT conversations replayed through the chat API
+             (benchmark/hicache/bench_serving.py); the main workload.
+  synthetic  random-token conversations with uniform lengths
+             (benchmark/hicache/bench_multiturn.py); the earlier rows.
+
+    python cache_aware_mlfq/run_experiment.py --name fcfs-sharegpt-s1 --workload sharegpt \
+        --seed 1 -- --schedule-policy fcfs
 """
 
 import argparse
@@ -38,7 +45,7 @@ SERVER_ARGS = [
 # 64 conversations x 6 turns. Each turn adds 256-1024 new tokens and gets a
 # 64-256 token answer, so contexts grow to several thousand tokens and together
 # far exceed the 24k-token GPU pool.
-WORKLOAD = {
+SYNTHETIC_WORKLOAD = {
     "num-clients": 64,
     "num-rounds": 6,
     "request-length": 1024,
@@ -48,6 +55,57 @@ WORKLOAD = {
     "request-rate": 2.0,
     "seed": 1,
 }
+
+# Real conversations whose whole history fits in 16k tokens (prepare_sharegpt.py),
+# with each reply as long as the real one. A conversation's next turn is queued as
+# soon as its previous answer arrives; requests are released as a Poisson process.
+SHAREGPT_DATA = "/workspace/data/sharegpt_multiturn_16k.json"
+SHAREGPT_WORKLOAD = {
+    "num-prompts": 200,  # conversations
+    "request-rate": 1.0,
+    "seed": 1,
+}
+# Qwen3 thinks by default; ordinary chat replies keep reply lengths meaningful.
+CHAT_REQUEST_BODY = '{"chat_template_kwargs": {"enable_thinking": false}}'
+
+
+def bench_command(workload_name: str, workload: dict, out: Path, tag: str) -> list:
+    if workload_name == "sharegpt":
+        cmd = [
+            sys.executable, "benchmark/hicache/bench_serving.py",
+            "--backend", "sglang", "--port", str(PORT), "--model", MODEL,
+            "--dataset-name", "sharegpt", "--dataset-path", SHAREGPT_DATA,
+            "--enable-multiturn", "--extra-request-body", CHAT_REQUEST_BODY,
+            "--output-file", str(out / "bench.jsonl"), "--disable-tqdm",
+        ]
+    else:
+        cmd = [
+            sys.executable, "benchmark/hicache/bench_multiturn.py",
+            "--model-path", MODEL, "--port", str(PORT),
+            "--distribution", "poisson", "--disable-auto-run",
+            "--log-file", str(out / "bench.jsonl"), "--tag", tag,
+        ]
+    for key, value in workload.items():
+        cmd += [f"--{key}", str(value)]
+    return cmd
+
+
+def normalize_summary(workload_name: str, raw: dict) -> dict:
+    """Both clients' results in one shape: seconds, under "summary", as make_table reads."""
+    if workload_name != "sharegpt":
+        return raw
+    return {
+        "summary": {
+            "total_requests": raw["completed"],
+            "average_latency": raw["mean_e2e_latency_ms"] / 1000,
+            "p99_latency": raw["p99_e2e_latency_ms"] / 1000,
+            "average_ttft": raw["mean_ttft_ms"] / 1000,
+            "p99_ttft": raw["p99_ttft_ms"] / 1000,
+            "average_tpot": raw["mean_tpot_ms"] / 1000,
+            "throughput": raw["request_throughput"],
+        },
+        "raw": raw,
+    }
 
 
 def wait_for_server(proc: subprocess.Popen, timeout_s: float) -> None:
@@ -87,13 +145,25 @@ def read_cache_counters() -> dict:
         r'sglang:realtime_tokens_total\{[^}]*mode="prefill_compute"[^}]*\} ([0-9.e+]+)', text
     )
     counters["prefill_compute_tokens_all"] = sum(float(v) for v in values)
+    # Host-to-device (CPU memory to GPU) load-back of cached prefixes: tokens copied,
+    # copies, and their GPU-stream time; the latency proactive load-back would hide.
+    for metric, key in [
+        (r'sglang:load_back_tokens_total\{[^}]*pool="kv"[^}]*\}', "load_back_tokens"),
+        (r"sglang:load_back_duration_seconds_count\{[^}]*\}", "load_back_copies"),
+        (r"sglang:load_back_duration_seconds_sum\{[^}]*\}", "load_back_seconds"),
+    ]:
+        values = re.findall(rf"{metric} ([0-9.e+]+)", text)
+        counters[key] = sum(float(v) for v in values)
     return counters
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", required=True, help="results folder name, e.g. fcfs")
-    parser.add_argument("--request-rate", type=float, default=WORKLOAD["request-rate"])
+    parser.add_argument("--workload", choices=["synthetic", "sharegpt"], default="synthetic")
+    parser.add_argument("--request-rate", type=float, help="requests per second")
+    parser.add_argument("--seed", type=int, help="client seed; vary it across repeats")
+    parser.add_argument("--num-conversations", type=int, help="sharegpt only")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("server_flags", nargs=argparse.REMAINDER,
                         help="scheduling flags after --, e.g. -- --schedule-policy lpm")
@@ -106,9 +176,16 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "bench.jsonl").unlink(missing_ok=True)
 
-    workload = {**WORKLOAD, "request-rate": args.request_rate}
+    workload = dict(SHAREGPT_WORKLOAD if args.workload == "sharegpt" else SYNTHETIC_WORKLOAD)
+    if args.request_rate is not None:
+        workload["request-rate"] = args.request_rate
+    if args.seed is not None:
+        workload["seed"] = args.seed
+    if args.num_conversations is not None:
+        workload["num-prompts"] = args.num_conversations
     config = {
         "name": args.name,
+        "workload_name": args.workload,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gpu": subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                               capture_output=True, text=True).stdout.strip(),
@@ -124,14 +201,7 @@ def main() -> None:
         )
         try:
             wait_for_server(server, timeout_s=900)
-            bench_cmd = [
-                sys.executable, "benchmark/hicache/bench_multiturn.py",
-                "--model-path", MODEL, "--port", str(PORT),
-                "--distribution", "poisson", "--disable-auto-run",
-                "--log-file", str(out / "bench.jsonl"), "--tag", args.name,
-            ]
-            for key, value in workload.items():
-                bench_cmd += [f"--{key}", str(value)]
+            bench_cmd = bench_command(args.workload, workload, out, args.name)
             started = time.time()
             with open(out / "bench.log", "w") as bench_log:
                 bench = subprocess.Popen(bench_cmd, stdout=bench_log, stderr=subprocess.STDOUT,
@@ -145,7 +215,8 @@ def main() -> None:
                 if bench.returncode != 0:
                     sys.exit(f"benchmark client failed with code {bench.returncode}")
             time.sleep(10)  # let the server's periodic metrics logging catch up
-            summary = json.loads((out / "bench.jsonl").read_text().splitlines()[-1])
+            raw = json.loads((out / "bench.jsonl").read_text().splitlines()[-1])
+            summary = normalize_summary(args.workload, raw)
             summary["wall_time_s"] = time.time() - started
             summary["server_counters"] = read_cache_counters()
             (out / "summary.json").write_text(json.dumps(summary, indent=2))

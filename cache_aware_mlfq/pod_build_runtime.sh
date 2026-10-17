@@ -26,6 +26,8 @@ source /opt/venvs/sglang/bin/activate
 bash scripts/ci/utils/install_rust_protoc.sh
 source "$CARGO_HOME/env"
 uv pip install -e python --index-strategy unsafe-best-match --prerelease allow
+# benchmark/hicache/bench_serving.py imports a video-dataset loader that needs PyAV.
+uv pip install av
 python -c 'from sglang.srt.mem_cache.cpp_utils.native_hash import get_native_hash; get_native_hash([1], None)'
 
 hf download Qwen/Qwen3-8B

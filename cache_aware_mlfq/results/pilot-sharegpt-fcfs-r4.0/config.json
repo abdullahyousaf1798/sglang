@@ -1,0 +1,27 @@
+{
+  "name": "pilot-sharegpt-fcfs-r4.0",
+  "workload_name": "sharegpt",
+  "started_at": "2026-10-17T15:27:26Z",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--max-total-tokens",
+    "24576",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "30",
+    "--enable-metrics",
+    "--schedule-policy",
+    "fcfs"
+  ],
+  "workload": {
+    "num-prompts": 120,
+    "request-rate": 4.0,
+    "seed": 1
+  }
+}
