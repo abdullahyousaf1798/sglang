@@ -146,8 +146,11 @@ class PrefillBudget:
         # Single-pool continuation must make progress to release its KV, so it may
         # borrow the decode headroom in total_offset, but never tokens the pool does
         # not hold: alloc_token_slots would then fail with nothing left to evict.
+        # With no page free at all, the chunk waits for a decode step to retract.
         physical = int(self._available_and_evictable()) - self.page_size
-        return max(min(chunk_limit, physical), self.page_size)
+        if physical < self.page_size:
+            return None
+        return min(chunk_limit, physical)
 
     def fit_chunk(
         self,

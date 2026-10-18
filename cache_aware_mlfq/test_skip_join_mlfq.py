@@ -254,7 +254,7 @@ def test_continuing_chunk_never_exceeds_physical_tokens():
     assert budget.remaining_total < 0
     assert budget.available_chunk_tokens(8161) == 7669  # what physically fits, one page spare
     allocator.available_size = lambda: 0
-    assert budget.available_chunk_tokens(8161) == 1  # still asks for progress, not a crash-sized chunk
+    assert budget.available_chunk_tokens(8161) is None  # nothing fits: skip, let decode retract
     budget.total_offset = 31
     allocator.available_size = lambda: 50_000
     assert budget.available_chunk_tokens(8161) == 8161  # budget has room: unchanged behaviour

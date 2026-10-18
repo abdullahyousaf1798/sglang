@@ -4140,6 +4140,11 @@ class Scheduler(
                 gate_level=gate_level,
             )
             self.chunked_req = adder.add_chunked_req(self.chunked_req)
+            if self.chunked_req is not None and self.chunked_req not in adder.can_run_list:
+                # The pool has no page for the next chunk. Admitting other requests now
+                # would count a middle chunk that never runs; a decode step (and its
+                # retraction) frees KV instead.
+                return None, running_batch
 
         if self.enable_lora:
             running_loras = {

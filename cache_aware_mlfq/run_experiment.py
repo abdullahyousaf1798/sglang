@@ -147,6 +147,21 @@ def normalize_summary(workload_name: str, raw: dict) -> dict:
     }
 
 
+def wait_for_previous_server_to_exit(timeout_s: float = 180.0) -> None:
+    """A killed server releases its pinned HiCache host pool asynchronously; starting the
+    next one too early fails with "Not enough host memory available"."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        alive = subprocess.run(["pgrep", "-f", "sglang.launch_server|sglang::scheduler"],
+                               capture_output=True, text=True).stdout.split()
+        free_gb = int(subprocess.run(["awk", "/MemAvailable/ {print int($2/1048576)}", "/proc/meminfo"],
+                                     capture_output=True, text=True).stdout or 0)
+        if not alive and free_gb >= 95:
+            return
+        time.sleep(5)
+    print(f"warning: previous server still winding down after {timeout_s:.0f} s", flush=True)
+
+
 def wait_for_server(proc: subprocess.Popen, timeout_s: float) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -256,6 +271,7 @@ def main() -> None:
     }
     (out / "config.json").write_text(json.dumps(config, indent=2))
 
+    wait_for_previous_server_to_exit()
     with open(out / "server.log", "w") as server_log:
         server = subprocess.Popen(
             [sys.executable, "-m", "sglang.launch_server", *server_args(args.workload), *server_flags],
