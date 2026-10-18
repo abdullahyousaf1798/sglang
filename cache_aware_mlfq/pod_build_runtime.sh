@@ -51,4 +51,5 @@ tar -C / --exclude='opt/sglang/rust/target' --exclude='opt/sglang/rust/*/target'
   -cf - opt/sglang opt/venvs root/.cache | zstd -T0 -3 > "$SNAP.tmp"
 mv "$SNAP.tmp" "$SNAP"
 ls -la "$SNAP"
+date -u > /workspace/snapshots/BUILD_DONE
 echo BUILD_DONE

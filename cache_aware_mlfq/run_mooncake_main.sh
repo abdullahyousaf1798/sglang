@@ -81,6 +81,11 @@ flags() {
     ours-final-thr3) echo "$FINAL --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
     fastserve-final-thr3) echo "$FINAL --sj-mlfq-cost prompt --priority-scheduling-preemption-threshold 3" ;;
     ours-final-thr3-noyield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED8K --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
+    # Final table (REVIEW.md, revised after the overnight runs): no preemption, no mixed
+    # chunk, online cost model; yield as its own row; FastServe placement as the ablation.
+    ours-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
+    ours-final-yield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption --sj-mlfq-chunk-yield" ;;
+    fastserve-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost prompt --disable-priority-preemption" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }

@@ -141,8 +141,13 @@ class PrefillBudget:
 
     def available_chunk_tokens(self, chunk_limit: int) -> int | None:
         available = min(chunk_limit, int(self.remaining_total))
-        # Single-pool continuation must make progress to release its KV.
-        return available if available > 0 else chunk_limit
+        if available > 0:
+            return available
+        # Single-pool continuation must make progress to release its KV, so it may
+        # borrow the decode headroom in total_offset, but never tokens the pool does
+        # not hold: alloc_token_slots would then fail with nothing left to evict.
+        physical = int(self._available_and_evictable()) - self.page_size
+        return max(min(chunk_limit, physical), self.page_size)
 
     def fit_chunk(
         self,

@@ -230,6 +230,36 @@ def test_chunk_limit_reserves_for_more_urgent_waiting_requests():
         assert limit(**kwargs) is None, kwargs
 
 
+def _load_prefill_budget():
+    swa = types.ModuleType("sglang.srt.mem_cache.allocator.swa")
+    swa.is_swa_req_ring = lambda *a, **k: False
+    sys.modules[swa.__name__] = swa
+    spec = importlib.util.spec_from_file_location(
+        "prefill_budget", HERE.parent / "python/sglang/srt/mem_cache/prefill_budget.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_continuing_chunk_never_exceeds_physical_tokens():
+    # Regression: with the reservation budget exhausted, a chunked prefill used to be
+    # handed its full chunk and crash in alloc_token_slots ("Out of memory. Try to
+    # lower your batch size") when the pool held fewer tokens than the chunk.
+    budget_mod = _load_prefill_budget()
+    allocator = types.SimpleNamespace(page_size=1, available_size=lambda: 7670)
+    tree = types.SimpleNamespace(supports_mamba=lambda: False, evictable_size=lambda: 0)
+    budget = budget_mod.PrefillBudget(allocator, tree, num_mixed_decode_tokens=31)
+    budget.total_offset += 20_000  # running requests' reserved decode headroom
+    assert budget.remaining_total < 0
+    assert budget.available_chunk_tokens(8161) == 7669  # what physically fits, one page spare
+    allocator.available_size = lambda: 0
+    assert budget.available_chunk_tokens(8161) == 1  # still asks for progress, not a crash-sized chunk
+    budget.total_offset = 31
+    allocator.available_size = lambda: 50_000
+    assert budget.available_chunk_tokens(8161) == 8161  # budget has room: unchanged behaviour
+
+
 def test_prefill_gate():
     def at(level):
         return types.SimpleNamespace(mlfq_level=level)
