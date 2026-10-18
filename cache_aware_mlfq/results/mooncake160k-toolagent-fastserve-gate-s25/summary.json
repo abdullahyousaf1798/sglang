@@ -1,0 +1,42 @@
+{
+  "summary": {
+    "total_requests": 179,
+    "completed": 179,
+    "failed": 0,
+    "average_latency": 10.075089327033671,
+    "p50_latency": 4.940901888534427,
+    "p90_latency": 22.7946069650352,
+    "p99_latency": 58.46104012336582,
+    "average_ttft": 3.9850439781000495,
+    "p50_ttft": 2.1285860361531377,
+    "p99_ttft": 15.708690199069679,
+    "average_tpot": 0.10091617211216589,
+    "average_per_token_latency": 0.45410322321547403,
+    "p99_per_token_latency": 3.938637165352702,
+    "throughput": 0.6792455807563562,
+    "output_throughput": 120.97022273146302,
+    "input_throughput": 4498.909108112772,
+    "duration_s": 263.52766226418316
+  },
+  "trace": {
+    "path": "/workspace/data/mooncake_toolagent.jsonl",
+    "start_min": 25.0,
+    "minutes": 0.4,
+    "slowdown": 11.0
+  },
+  "wall_time_s": 275.01419734954834,
+  "server_counters": {
+    "prefill_tokens_input": 659258.0,
+    "prefill_tokens_device_hit": 526336.0,
+    "prefill_tokens_host_hit": 0.0,
+    "prefill_tokens_storage_hit": 0.0,
+    "retracted_requests": 2.0,
+    "retracted_output_tokens": 761.0,
+    "prefill_compute_tokens_all": 659260.0,
+    "load_back_tokens": 59426.0,
+    "load_back_copies": 3.0,
+    "load_back_seconds": 0.5086724739074706,
+    "load_ahead_copies": 2,
+    "load_ahead_tokens": 8704
+  }
+}

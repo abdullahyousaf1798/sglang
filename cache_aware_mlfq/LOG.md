@@ -254,3 +254,122 @@ Every MLFQ row uses cache-aware placement with preempted KV kept.
 | tool & agent | 23,608 | 8.6k / 6.3k / 62k | 182 / 30 / 507 | 57% |
 
 The tool-and-agent trace meets all three conditions. It needs an 80 GB GPU: the 4090's KV pool holds less than one p99 prompt. It also needs a replayer that preserves the block sharing, because SGLang's built-in Mooncake replay shrinks each block to about 130 filler tokens.
+
+## Steps 4b, 5 and 6 on Mooncake production traces (A100 80 GB)
+
+**Setup:**
+- **Hardware:** two A100 SXM 80GB pods, each running every row of its trace windows, so comparisons within a window are on one machine.
+- **Model:** Qwen3-8B with Qwen's documented YaRN extension to 131k. Trace prompts reach 126k tokens; SGLang also needed `max_position_embeddings` raised to 131072.
+- **Workload:** the Mooncake tool-and-agent trace. Four 0.4-minute windows at trace minutes 10, 25, 40 and 55, chosen before any results; about 180 requests each.
+  - The replay keeps the trace's prefix sharing: each 512-token block id becomes a fixed block of token ids (`mooncake_replay.py`).
+  - Arrival times are stretched 11x (slowdown 11, SGLang's own replay method). At slowdown 8, fcfs served only 0.84 of the 1.03 requests per second that arrived; 11 puts the load near 85% of capacity.
+- **Profile:** a new A100 prefill profile, 62 cells up to 32k new tokens on 96k cached.
+- **Two memory settings:**
+  - **Natural pool:** whatever fits, 393k tokens. Windows 10 and 25 only.
+  - **Pool pinned at 160k tokens:** all 4 windows. This is the tightest round size that still serves the largest request. SGLang's own HiCache benchmark constrains memory the same way (`bench_mix.sh`, `--mem-frac 0.25`).
+- **New mechanisms, all opt-in:**
+  - **Step 4b, two-tier eviction** (`--radix-eviction-policy mlfq`): unclaimed KV, such as finished conversations, is evicted first by LRU; then waiting and preempted requests' KV, lowest level first.
+  - **Step 5, load-ahead** (`--sj-mlfq-load-ahead`): the CPU-cached prefixes of the next 8 waiting requests, in MLFQ order, are copied back while other batches run. It extends FastServe's proactive swap-in to returning turns' cached history.
+  - **Step 6, the prefill gate** (`--sj-mlfq-prefill-gate`): SGLang runs a decode step instead of a new prefill while every running request is in a higher queue than the next waiting one. This is FastServe's iteration-level priority fitted to SGLang's separate prefill and decode steps.
+- **Rows:** a 2x2 of placement (FastServe's full-prompt cost, cache-aware) by eviction (SGLang's LRU, two-tier). Every cell has FastServe's own mechanisms ported (kept KV, load-ahead), and every cell runs with and without the gate:
+
+  | Row | Placement | Eviction |
+  | --- | --- | --- |
+  | `fastserve-lru` | FastServe | LRU (this is FastServe ported) |
+  | `ours-lru-eviction` | cache-aware | LRU |
+  | `fastserve` | FastServe | two-tier |
+  | `ours` | cache-aware | two-tier |
+
+**Bugs found along the way:**
+- **The first gate checked only the head of the waiting queue.** A short, urgent head let long low-priority prompts into the same prefill batch, so the gate never held anything back and matched `fastserve` to 0.01 s. It now stops admission at the first request less urgent than the most urgent running one.
+- **The first `fastserve` rows had two-tier eviction on.** That is one of the two changes being measured, so they were not a FastServe baseline; `fastserve-lru` was added as the faithful port.
+- **SGLang's experimental `shortest-prefill-first` crashed** with "Out of memory. Try to lower your batch size" on windows 10 and 55 of the pinned pool. That is an upstream bug; it is reported over the 2 windows it finished.
+
+### Natural pool (393k tokens), windows 10 and 25
+
+Change against fcfs on the same windows (geometric mean of per-window ratios; negative is better):
+
+| Config | JCT mean | JCT p50 | JCT p99 | TTFT | TPOT | Per-token latency | Throughput |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| fcfs (absolute) | 20.68 s | 13.57 s | 76.5 s | 6.90 s | 1076 ms | 1444 ms | 0.69 req/s |
+| lpm | +4% | +2% | +2% | -26% | +50% | +4% | 0% |
+| shortest-prefill-first | +1% | 0% | 0% | -57% | +64% | -1% | 0% |
+| sj-mlfq-naive | -1% | 0% | 0% | -43% | +42% | -1% | 0% |
+| fastserve | -1% | 0% | -1% | -48% | +50% | -1% | 0% |
+| ours | -1% | 0% | -1% | -48% | +54% | -1% | 0% |
+| **fastserve-gate** | **-35%** | **-52%** | -12% | -16% | **-88%** | **-57%** | 0% |
+| **ours-gate** | **-34%** | **-52%** | -11% | -19% | **-88%** | **-61%** | -1% |
+
+### Pool pinned at 160k tokens, 4 windows
+
+| Config | JCT mean | JCT p50 | JCT p99 | TTFT | TPOT | Per-token latency | Throughput | Preempted per run |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fcfs (absolute) | 23.37 s | 18.08 s | 78.8 s | 14.10 s | 453 ms | 1562 ms | 0.66 req/s | 0 |
+| lpm | -13% | -18% | 0% | -28% | +18% | -43% | +1% | 0 |
+| shortest-prefill-first (2 windows) | -16% | -13% | -5% | -57% | +106% | -34% | +1% | 0 |
+| fastserve-lru (FastServe ported) | -11% | -15% | +15% | -48% | +81% | -29% | 0% | 20 |
+| ours-lru-eviction | -15% | -14% | +5% | -49% | +98% | -31% | 0% | 12 |
+| fastserve | -8% | -14% | +13% | -47% | +64% | -30% | 0% | 25 |
+| ours | -18% | -20% | +9% | -51% | +62% | -39% | +1% | 14 |
+| fastserve-lru-gate | -21% | -32% | +30% | -40% | -68% | -53% | -2% | 19 |
+| ours-lru-gate | -21% | -38% | +11% | -42% | -76% | -59% | -2% | 34 |
+| fastserve-gate | -20% | -43% | +29% | -46% | -72% | -58% | -1% | 27 |
+| ours-gate | -20% | -38% | +14% | -46% | -71% | -62% | -2% | 44 |
+
+Mean JCT per window shows where the gate stops paying off:
+
+| Config | Window 10 | Window 25 | Window 40 | Window 55 |
+| --- | --- | --- | --- | --- |
+| fcfs | 26.40 | 13.33 | 23.55 | 30.18 |
+| lpm | 21.59 | 12.91 | 22.23 | 23.35 |
+| fastserve-lru | 20.47 | 12.77 | 20.93 | 28.67 |
+| ours | 18.05 | 12.65 | 20.65 | 23.60 |
+| fastserve-lru-gate | 17.35 | 10.62 | 19.48 | 26.59 |
+| ours-gate | 17.31 | 9.65 | 19.49 | 31.34 (111 preemptions) |
+
+### The two changes on top of FastServe (pinned pool, 4 windows)
+
+Change from the row without the change to the row with it:
+
+| Change | Gate | JCT mean | JCT p50 | JCT p99 | TTFT | Per-token latency |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cache-aware placement (LRU eviction) | off | -5% | +2% | -9% | -3% | -2% |
+| Cache-aware placement (two-tier eviction) | off | -11% | -7% | -4% | -8% | -12% |
+| Two-tier eviction (FastServe placement) | off | +3% | +2% | -2% | +2% | -2% |
+| Two-tier eviction (cache-aware placement) | off | -4% | -7% | +3% | -3% | -12% |
+| Both, against FastServe ported | off | -8% | -6% | -5% | -6% | -14% |
+| Cache-aware placement (LRU eviction) | on | +1% | -9% | -15% | -3% | -14% |
+| Cache-aware placement (two-tier eviction) | on | 0% | +9% | -11% | 0% | -10% |
+| Two-tier eviction (FastServe placement) | on | +2% | -16% | -1% | -9% | -12% |
+| Two-tier eviction (cache-aware placement) | on | +1% | 0% | +3% | -7% | -8% |
+| Both, against FastServe ported + gate | on | +2% | -9% | -12% | -9% | -21% |
+
+Returning turns (at least half the prompt is a prefix an earlier request sent; 47-63% of requests) against fresh prompts, mean over windows:
+
+| Config | Returning: JCT (s) | Returning: TTFT (s) | Fresh: JCT (s) | Fresh: TTFT (s) |
+| --- | --- | --- | --- | --- |
+| Natural pool, fcfs | 16.57 | 6.88 | 27.58 | 6.93 |
+| Natural pool, fastserve-gate | 7.65 | 4.79 | 22.46 | 7.85 |
+| Natural pool, ours-gate | 7.81 | 4.27 | 22.76 | 8.14 |
+| Pinned pool, fcfs | 18.71 | 14.02 | 28.69 | 14.21 |
+| Pinned pool, fastserve-lru-gate | 9.69 | 6.27 | 28.68 | 10.64 |
+| Pinned pool, ours-gate | 9.34 | 5.07 | 30.90 | 10.61 |
+
+**Reading:**
+- **With plenty of memory, admission order cannot change JCT; only the gate can.**
+  - SGLang runs any admissible prefill before the next decode step, and on this trace each prefill chunk takes about 1 s. Every running request freezes for every newcomer's prefill.
+  - Reordering the queue (lpm, shortest-prefill-first, MLFQ without the gate) only moves waiting between TTFT and TPOT: mean JCT stays within 4% of fcfs.
+  - The gate lets urgent requests finish first: -35% mean and -52% median JCT, -88% TPOT, same throughput. This holds on both windows (26.3 to 16.1 s, 15.0 to 10.25 s).
+  - Nothing was preempted or reloaded from CPU here, so 4b and 5 had nothing to act on.
+- **Under memory pressure, every MLFQ variant beats fcfs** (-8% to -21% mean), and the gated ones cut the median by 32-43%.
+  - **But the heaviest window (55) shows the gate's limit.** Urgent requests the gate admits preempt running ones when memory is short. `ours-gate` preempted 111 requests and ended 4% slower than fcfs; the same churn hurt MLFQ on ShareGPT.
+  - Limiting that churn is the open problem: a preemption threshold, or not preempting for gate admissions.
+- **Cache-aware placement helps, mostly where FastServe's own metric looks.**
+  - Without the gate it cuts mean JCT 5-11% against FastServe's placement.
+  - With the gate the mean is unchanged, but per-token latency (end-to-end time over output length, FastServe's metric) drops 10-21%, and p99 drops 11-15% (noisy at about 180 requests per window).
+  - Returning turns get their first token 11-19% sooner; fresh prompts give up a few percent.
+- **Two-tier eviction shows no consistent gain** (-4% to +3% on the mean). Two likely reasons:
+  - LRU already evicts old conversations first.
+  - In agent traffic, a turn that just finished is what the same session's next turn reuses seconds later, so evicting finished KV first is not reliably right.
+  - Memory pressure was also moderate: 12-44 preemptions per run.
+- **Noise:** each window ran once. Differences under about 10% on the mean are within noise.

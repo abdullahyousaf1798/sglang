@@ -12,14 +12,14 @@ go to the native /generate API as token ids, at their trace times stretched by
         --start-min 0 --minutes 2 --slowdown 4 --output-file bench.jsonl
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
 import random
 import statistics
 import time
-
-import aiohttp
 
 BLOCK_TOKENS = 512
 # Ordinary Qwen3 vocabulary ids; special tokens start at 151643.
@@ -77,6 +77,8 @@ async def send(session: aiohttp.ClientSession, url: str, input_ids: list, output
 
 
 async def replay(args) -> list:
+    import aiohttp  # here, so analyze_mooncake.py can reuse load_window without it
+
     window = load_window(args.trace, args.start_min, args.minutes)
     builder = PromptBuilder()
     prompts = [builder.build(r) for r in window]  # built up front so sending stays on time

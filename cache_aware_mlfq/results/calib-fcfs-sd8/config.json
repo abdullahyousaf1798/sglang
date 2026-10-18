@@ -1,0 +1,30 @@
+{
+  "name": "calib-fcfs-sd8",
+  "workload_name": "mooncake",
+  "started_at": "2026-10-17T20:08:38Z",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--context-length",
+    "131072",
+    "--json-model-override-args",
+    "{\"max_position_embeddings\": 131072, \"rope_scaling\": {\"rope_type\": \"yarn\", \"factor\": 4.0, \"original_max_position_embeddings\": 32768}}",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "80",
+    "--enable-metrics",
+    "--schedule-policy",
+    "fcfs"
+  ],
+  "workload": {
+    "trace": "/workspace/data/mooncake_toolagent.jsonl",
+    "start-min": 10.0,
+    "minutes": 0.5,
+    "slowdown": 8.0
+  }
+}
