@@ -3,20 +3,20 @@
     "total_requests": 441,
     "completed": 441,
     "failed": 0,
-    "average_latency": 18.87641560475927,
-    "p50_latency": 13.784163818694651,
-    "p90_latency": 45.20996058639139,
-    "p99_latency": 80.0219570286572,
-    "average_ttft": 9.269053798758101,
-    "p50_ttft": 5.428670628927648,
-    "p99_ttft": 47.340944425202906,
-    "average_tpot": 0.25552226049004356,
-    "average_per_token_latency": 0.784071647588043,
-    "p99_per_token_latency": 6.339515051804483,
-    "throughput": 0.6459734602167455,
-    "output_throughput": 124.2290457165129,
-    "input_throughput": 5627.238868699871,
-    "duration_s": 682.6905858516693
+    "average_latency": 17.923166343564265,
+    "p50_latency": 12.612858657725155,
+    "p90_latency": 44.82735557667911,
+    "p99_latency": 76.16720208246261,
+    "average_ttft": 8.339114489063384,
+    "p50_ttft": 4.468993001617491,
+    "p99_ttft": 42.34802224393934,
+    "average_tpot": 0.214771727888169,
+    "average_per_token_latency": 0.6268981419346761,
+    "p99_per_token_latency": 3.931957651861012,
+    "throughput": 0.6463937823970346,
+    "output_throughput": 124.30987910451815,
+    "input_throughput": 5630.900401960859,
+    "duration_s": 682.2466614153236
   },
   "trace": {
     "path": "/workspace/data/mooncake_toolagent.jsonl",
@@ -24,17 +24,17 @@
     "minutes": 1.0,
     "slowdown": 11.0
   },
-  "wall_time_s": 700.2054555416107,
+  "wall_time_s": 695.0254325866699,
   "server_counters": {
-    "prefill_tokens_input": 2553252.0,
-    "prefill_tokens_device_hit": 1197282.0,
+    "prefill_tokens_input": 2558640.0,
+    "prefill_tokens_device_hit": 1191894.0,
     "prefill_tokens_host_hit": 91136.0,
     "prefill_tokens_storage_hit": 0.0,
     "retracted_requests": 0,
     "retracted_output_tokens": 0,
-    "prefill_compute_tokens_all": 2553252.0,
+    "prefill_compute_tokens_all": 2558640.0,
     "load_back_tokens": 91136.0,
-    "load_back_copies": 13.0,
-    "load_back_seconds": 1.2223867168426512
+    "load_back_copies": 16.0,
+    "load_back_seconds": 1.096114393234253
   }
 }
