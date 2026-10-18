@@ -367,7 +367,7 @@ Returning turns (at least half the prompt is a prefix an earlier request sent; 4
 - **Cache-aware placement helps, mostly where FastServe's own metric looks.**
   - Without the gate it cuts mean JCT 5-11% against FastServe's placement.
   - With the gate the mean is unchanged, but per-token latency (end-to-end time over output length, FastServe's metric) drops 10-21%, and p99 drops 11-15% (noisy at about 180 requests per window).
-  - Returning turns get their first token 11-19% sooner; fresh prompts give up a few percent.
+  - Returning turns get their first token 11% sooner with the natural pool and 2-4% sooner with the pinned pool; fresh prompts give up 4-8%.
 - **Two-tier eviction shows no consistent gain** (-4% to +3% on the mean). Two likely reasons:
   - LRU already evicts old conversations first.
   - In agent traffic, a turn that just finished is what the same session's next turn reuses seconds later, so evicting finished KV first is not reliably right.
