@@ -3,11 +3,12 @@
 # given trace window, window-major, so each window's rows run back to back on one pod.
 # Runs on the pod in the background; writes a marker when every row has finished.
 #
-#   [POOL=<gpu-kv-tokens>] [CONFIGS="<config> ..."] bash cache_aware_mlfq/run_mooncake_main.sh \
+#   [POOL=<gpu-kv-tokens>] [CONFIGS="<config> ..."] [TAG=<suffix>] bash cache_aware_mlfq/run_mooncake_main.sh \
 #       <trace: toolagent|conversation> <slowdown> <window-minutes> <window-start-minute>...
 #
 # POOL pins the GPU KV pool (--max-total-tokens) and names the rows mooncake<POOL/1000>k-*;
-# without it the pool is whatever fits, and rows are named mooncake-*.
+# without it the pool is whatever fits, and rows are named mooncake-*. TAG is appended to
+# the row name (e.g. m1 for 1-minute windows, m1-r2 for a repeat, m1-sd9 for slowdown 9).
 set -uo pipefail
 source /workspace/env.sh
 trace=$1 slowdown=$2 minutes=$3
@@ -36,6 +37,10 @@ PORTED="--preempt-keep-kv --sj-mlfq-load-ahead"
 # no load-ahead) on top of mixed 2k chunks with three preemption settings.
 MIXED2K="--enable-mixed-chunk --chunked-prefill-size 2048"
 OURS="$MLFQ_BASE --sj-mlfq-cost cache-aware --preempt-keep-kv"
+# E3/E4 "final" rows: the reduced design of REVIEW.md. No profile (the cost model is
+# fitted online), kept KV, the gate, mixed 2k chunks and chunk yield; LRU eviction.
+MLFQ_ONLINE="--schedule-policy sj-mlfq --enable-priority-scheduling --retraction-policy priority"
+FINAL="$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED2K --sj-mlfq-chunk-yield"
 flags() {
   case $1 in
     fcfs) echo "--schedule-policy fcfs" ;;
@@ -62,6 +67,11 @@ flags() {
     # E2: churn control
     ours-gate-mixed2k-nopreempt) echo "$OURS --disable-priority-preemption $GATE $MIXED2K" ;;
     ours-gate-mixed2k-thr3) echo "$OURS --priority-scheduling-preemption-threshold 3 $GATE $MIXED2K" ;;
+    # E3/E4: final design, with FastServe placement as the ablation and no-yield for E3
+    ours-final-nopreempt) echo "$FINAL --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
+    ours-final-thr3) echo "$FINAL --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
+    fastserve-final-thr3) echo "$FINAL --sj-mlfq-cost prompt --priority-scheduling-preemption-threshold 3" ;;
+    ours-final-thr3-noyield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED2K --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }
@@ -74,7 +84,7 @@ for start in "$@"; do
   for config in ${CONFIGS:-$DEFAULT_CONFIGS}; do
     server_flags=$(flags "$config") || continue
     # Word splitting of the flag strings is intended; no flag contains a space.
-    python cache_aware_mlfq/run_experiment.py --name "$prefix-$trace-$config-s$start" \
+    python cache_aware_mlfq/run_experiment.py --name "$prefix-$trace-$config-s$start${TAG:+-$TAG}" \
       --workload mooncake --trace "/workspace/data/mooncake_$trace.jsonl" \
       --start-min "$start" --minutes "$minutes" --slowdown "$slowdown" \
       -- $server_flags $pool_flags \

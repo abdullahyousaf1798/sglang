@@ -47,7 +47,11 @@ from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
     split_cached_prefix_by_tier,
 )
-from sglang.srt.managers.skip_join_mlfq import MlfqLoadAhead, SkipJoinMlfq
+from sglang.srt.managers.skip_join_mlfq import (
+    MlfqLoadAhead,
+    SkipJoinMlfq,
+    mlfq_chunk_limit,
+)
 from sglang.srt.mem_cache.allocator.hisparse import (
     DeepSeekV4HiSparseTokenToKVPoolAllocator,
 )
@@ -209,6 +213,9 @@ class SchedulePolicy:
         self.mlfq_prefill_gate = get_schedule().sj_mlfq_prefill_gate
         if self.mlfq_prefill_gate and self.mlfq is None:
             raise ValueError("--sj-mlfq-prefill-gate requires --schedule-policy sj-mlfq")
+        self.mlfq_chunk_yield = get_schedule().sj_mlfq_chunk_yield
+        if self.mlfq_chunk_yield and self.mlfq is None:
+            raise ValueError("--sj-mlfq-chunk-yield requires --schedule-policy sj-mlfq")
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()
@@ -462,6 +469,31 @@ class SchedulePolicy:
                 r.time_stats.wait_queue_entry_time,
             )
         )
+
+    def prefill_chunk_limit(
+        self,
+        chunked_req: Req,
+        waiting_queue: List[Req],
+        budget: int,
+        page_size: int,
+        gate_level: Optional[int] = None,
+    ) -> Optional[int]:
+        """Cap the active prefill chunk so waiting requests that should go first fit beside it."""
+        if self.policy == CacheAwarePolicy.SHORTEST_PREFILL_FIRST:
+            return self.shortest_prefill_chunk_limit(
+                chunked_req, waiting_queue, budget, page_size
+            )
+        if self.policy == CacheAwarePolicy.SJ_MLFQ and self.mlfq_chunk_yield:
+            return mlfq_chunk_limit(
+                chunked_level=chunked_req.mlfq_level,
+                waiting=[
+                    (r.mlfq_level, self._shortest_prefill_work(r)) for r in waiting_queue
+                ],
+                budget=budget,
+                page_size=page_size,
+                gate_level=gate_level,
+            )
+        return None
 
     def shortest_prefill_chunk_limit(
         self, chunked_req: Req, waiting_queue: List[Req], budget: int, page_size: int

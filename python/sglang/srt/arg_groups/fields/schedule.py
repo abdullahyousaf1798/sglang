@@ -110,8 +110,9 @@ class Schedule(msgspec.Struct):
     ] = "cache-aware"
     sj_mlfq_profile: A[
         Optional[str],
-        "Prefill latency profile (JSON from cache_aware_mlfq/profile_prefill.py) that sj-mlfq "
-        "uses to predict first-iteration time. Required with --schedule-policy sj-mlfq.",
+        "Optional prefill latency profile (JSON from cache_aware_mlfq/profile_prefill.py) that "
+        "sj-mlfq uses to predict first-iteration time. Without it, sj-mlfq fits the compute and "
+        "attention scales of a prefill cost model online from the batches it runs.",
     ] = None
     sj_mlfq_base_quantum_ms: A[
         float,
@@ -130,6 +131,12 @@ class Schedule(msgspec.Struct):
         "request is in a higher-priority queue than the next waiting request, so a long, "
         "low-priority prefill does not stall more urgent requests mid-answer "
         "(FastServe's iteration-level preemption). A started chunked prefill continues.",
+    ] = False
+    sj_mlfq_chunk_yield: A[
+        bool,
+        "With sj-mlfq, cap a chunked prefill in progress so waiting requests in a more urgent "
+        "queue fit in the same batch (shortest-prefill-first's chunk-sharing rule, at MLFQ "
+        "levels), instead of waiting for the long prefill to finish.",
     ] = False
     enable_priority_scheduling: A[
         bool,

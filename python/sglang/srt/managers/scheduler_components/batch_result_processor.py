@@ -121,7 +121,9 @@ class SchedulerBatchResultProcessor:
         # launch_ts is set in Scheduler.run_batch; with overlap scheduling this
         # runs once the batch's outputs are on the host, i.e. after its forward.
         if self.mlfq is not None and batch.launch_ts is not None:
-            self.mlfq.charge(batch.reqs, time.monotonic() - batch.launch_ts)
+            elapsed_s = time.monotonic() - batch.launch_ts
+            self.mlfq.charge(batch.reqs, elapsed_s)
+            self.mlfq.observe_batch(batch, elapsed_s)
 
     def process_batch_result_prebuilt(self, batch: ScheduleBatch):
         assert self.disaggregation_mode == DisaggregationMode.DECODE

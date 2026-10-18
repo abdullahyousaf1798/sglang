@@ -8,7 +8,13 @@ level 0. The level is stored as ``req.priority = -level``, so SGLang's priority
 preemption, retraction and eviction all follow MLFQ order.
 
 Placement cost is either FastServe's (a fresh prefill of the whole prompt) or
-cache-aware (the uncached suffix prefilled on top of the cached prefix).
+cache-aware (the uncached suffix prefilled on top of the cached prefix). The cost
+comes from a profiled latency grid when one is given, otherwise from a seed cost
+shape whose compute and attention scales are fitted online to the prefill batches
+the scheduler actually runs.
+
+``mlfq_chunk_limit`` is shortest-prefill-first's chunk-sharing rule at MLFQ levels:
+a chunked prefill in progress leaves room in its batch for more urgent arrivals.
 
 ``MlfqLoadAhead`` is FastServe's proactive swap-in on top of HiCache: it copies
 the CPU-cached prefixes of the next waiting requests back to the GPU before they
@@ -26,7 +32,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
-    from sglang.srt.managers.schedule_batch import Req
+    from sglang.srt.managers.schedule_batch import Req, ScheduleBatch
     from sglang.srt.mem_cache.evict_policy import MlfqTierStrategy
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
@@ -42,6 +48,11 @@ STARVATION_S = 3.0
 STARVATION_CHECK_INTERVAL = 1000
 
 COST_MODES = ("prompt", "cache-aware")
+
+# Seed for the online cost model, in seconds: per uncached token, per (uncached x
+# cached) token pair, per cached token. Fitted to Qwen3-8B on an A100; levels are
+# logarithmic, so a factor-two error elsewhere costs one level until the fit corrects.
+DEFAULT_COST_SEED = (7.2e-5, 2.8e-9, 6e-7)
 
 # Load-ahead limits; arbitrary, not tuned. A copy carries at most 32k tokens
 # (about 4.5 GB for Qwen3-8B), skips CPU-only prefixes under 256 tokens (cheap to
@@ -90,6 +101,95 @@ class PrefillCostModel:
         return max(0.0, latency - self._overhead_s)
 
 
+class OnlinePrefillCostModel:
+    """Prefill time as compute * a*u + attention * (b*u*c + d*c), fitted online.
+
+    (a, b, d) is a seed shape: dense compute per uncached token u, attention of new
+    tokens over the cached prefix c, and the per-chunk read of the prefix KV. The two
+    scale factors are fitted by ridge least squares with exponential forgetting from
+    the prefill batches the scheduler runs, so no hardware profile is needed. Two
+    factors, not three free coefficients, because u*c and c are nearly collinear in
+    real batches and a free fit drifts; a wrong shape costs at most about one level.
+    """
+
+    FORGETTING = 0.98
+    RIDGE = 0.2  # weight of the seed factors (1, 1): about one typical batch (x^2 ~ 0.1-0.4 s^2)
+    FACTOR_RANGE = (0.1, 10.0)
+
+    def __init__(self, seed: Tuple[float, float, float] = DEFAULT_COST_SEED):
+        self._seed = seed
+        self._factors = [1.0, 1.0]
+        self._ata = [[self.RIDGE, 0.0], [0.0, self.RIDGE]]
+        self._atb = [self.RIDGE, self.RIDGE]
+        self.observations = 0
+
+    def _features(self, rows: Sequence[Tuple[int, int]]) -> Tuple[float, float]:
+        a, b, d = self._seed
+        compute = attention = 0.0
+        for u, c in rows:
+            compute += a * u
+            attention += b * u * c + d * c
+        return compute, attention
+
+    def observe(self, rows: Sequence[Tuple[int, int]], elapsed_s: float) -> None:
+        """One forward pass over ``rows`` = [(uncached, cached), ...] that took ``elapsed_s``."""
+        if not rows or not 0 < elapsed_s < 60:
+            return
+        x = self._features(rows)
+        lam = self.FORGETTING
+        for i in range(2):
+            for j in range(2):
+                self._ata[i][j] = lam * self._ata[i][j] + x[i] * x[j]
+            # The seed anchor is topped up so forgetting never erodes it.
+            self._ata[i][i] += (1 - lam) * self.RIDGE
+            self._atb[i] = lam * self._atb[i] + x[i] * elapsed_s + (1 - lam) * self.RIDGE
+        self.observations += 1
+        (p, q), (r, t) = self._ata
+        det = p * t - q * r
+        if abs(det) < 1e-12:
+            return
+        lo, hi = self.FACTOR_RANGE
+        f0 = (t * self._atb[0] - q * self._atb[1]) / det
+        f1 = (p * self._atb[1] - r * self._atb[0]) / det
+        self._factors = [min(max(f0, lo), hi), min(max(f1, lo), hi)]
+
+    def predict_s(self, *, uncached: int, cached: int) -> float:
+        compute, attention = self._features([(uncached, cached)])
+        return max(0.0, self._factors[0] * compute + self._factors[1] * attention)
+
+
+def mlfq_chunk_limit(
+    *,
+    chunked_level: Optional[int],
+    waiting: Sequence[Tuple[Optional[int], int]],
+    budget: int,
+    page_size: int,
+    gate_level: Optional[int],
+) -> Optional[int]:
+    """Chunk-token cap for the prefill in progress, or None to keep the full chunk.
+
+    ``waiting`` is [(level, uncached work)] in queue order. Room is reserved for
+    waiting requests in a more urgent queue than the chunked request that also pass
+    the gate, until the chunk would stop making progress; this is
+    shortest-prefill-first's reservation rule with the MLFQ level as urgency.
+    """
+    if budget < 2 * page_size or chunked_level is None:
+        return None
+    reserved = 0
+    for level, work in waiting:
+        if level is None or level >= chunked_level:
+            break
+        if gate_level is not None and level > gate_level:
+            break
+        charge = -(-work // page_size) * page_size
+        if reserved + charge > budget - page_size:
+            break
+        reserved += charge
+    if not reserved:
+        return None
+    return (budget - reserved) // page_size * page_size
+
+
 class SkipJoinMlfq:
     """Queue levels, demotion and starvation promotion for ``--schedule-policy sj-mlfq``."""
 
@@ -107,8 +207,6 @@ class SkipJoinMlfq:
         at their level each step, so unclaimed KV is evicted first."""
         if cost_mode not in COST_MODES:
             raise ValueError(f"--sj-mlfq-cost must be one of {COST_MODES}, got {cost_mode!r}")
-        if profile_path is None:
-            raise ValueError("--schedule-policy sj-mlfq requires --sj-mlfq-profile")
         if base_quantum_s <= 0:
             raise ValueError(f"--sj-mlfq-base-quantum-ms must be positive, got {base_quantum_s * 1000}")
         if (claim_strategy is None) != (node_of is None):
@@ -117,7 +215,9 @@ class SkipJoinMlfq:
         self._claim_strategy = claim_strategy
         self._node_of = node_of
         self._cache_aware = cost_mode == "cache-aware"
-        self._cost_model = PrefillCostModel(profile_path)
+        # A profile fixes the cost model; without one it is fitted online.
+        self._online_model = OnlinePrefillCostModel() if profile_path is None else None
+        self._cost_model = self._online_model or PrefillCostModel(profile_path)
         self._steps = 0
         self._placed_per_level: Counter = Counter()
         self._demotions = 0
@@ -169,6 +269,17 @@ class SkipJoinMlfq:
                 self._set_level(req, req.mlfq_level + 1)
                 req.mlfq_level_entry_time = now
                 self._demotions += 1
+
+    def observe_batch(self, batch: ScheduleBatch, elapsed_s: float) -> None:
+        """Feed a finished prefill (or mixed) batch's rows and wall time to the online fit."""
+        if (
+            self._online_model is not None
+            and batch.forward_mode.is_extend()
+            and batch.extend_lens is not None
+        ):
+            self._online_model.observe(
+                list(zip(batch.extend_lens, batch.prefix_lens)), elapsed_s
+            )
 
     @staticmethod
     def prefill_gate_level(running_reqs: List[Req]) -> Optional[int]:

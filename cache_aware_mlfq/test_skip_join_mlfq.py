@@ -183,6 +183,53 @@ def test_load_ahead_copies_next_waiting_prefixes():
     assert tree.loaded == [2, 4, 5]
 
 
+def test_online_cost_model_starts_from_seed_and_learns():
+    model = mlfq_mod.OnlinePrefillCostModel()
+    # Seed: about 0.6 s for an 8k chunk with no prefix, 1.3 s on a 32k prefix (A100, 8B).
+    assert 0.5 < model.predict_s(uncached=8192, cached=0) < 0.7
+    assert 1.2 < model.predict_s(uncached=8192, cached=32768) < 1.5
+
+    # A GPU twice as slow: feed it batches with doubled times and check it adapts.
+    def truth(rows):
+        return 2 * sum(mlfq_mod.OnlinePrefillCostModel().predict_s(uncached=u, cached=c)
+                       for u, c in rows)
+    batches = [[(8192, 0)], [(2048, 32768), (1024, 0)], [(8192, 98304)], [(512, 4096)] * 4,
+               [(4096, 16384)], [(1, 20000)] * 8 + [(2048, 0)]]
+    for _ in range(5):
+        for rows in batches:
+            model.observe(rows, truth(rows))
+    for u, c in [(8192, 0), (2048, 32768), (512, 98304)]:
+        want = truth([(u, c)])
+        assert abs(model.predict_s(uncached=u, cached=c) - want) < 0.15 * want, (u, c)
+    model.observe([(8192, 0)], 500.0)  # an implausible time is ignored
+    assert model.observations == 30
+
+
+def test_mlfq_without_profile_places_with_the_online_model():
+    q = mlfq_mod.SkipJoinMlfq(cost_mode="cache-aware", profile_path=None)
+    turn, fresh = FakeReq(prompt_len=5000, cached=4500), FakeReq(prompt_len=60000)
+    q.order([fresh, turn])
+    assert turn.mlfq_level < fresh.mlfq_level
+    assert turn.mlfq_level == 3 and fresh.mlfq_level == 9  # 0.045 s vs 4.3 s predicted
+
+
+def test_chunk_limit_reserves_for_more_urgent_waiting_requests():
+    limit = mlfq_mod.mlfq_chunk_limit
+    # Levels 3 and 4 are more urgent than the level-8 chunked request; level 9 is not.
+    waiting = [(3, 512), (4, 1024), (9, 100)]
+    assert limit(chunked_level=8, waiting=waiting, budget=4096, page_size=256, gate_level=None) == 2560
+    # The gate admits only level <= 3 this step, so only the first is reserved for.
+    assert limit(chunked_level=8, waiting=waiting, budget=4096, page_size=256, gate_level=3) == 3584
+    # Reservation rounds up to pages and always leaves the chunk one page of progress.
+    assert limit(chunked_level=8, waiting=[(1, 257)], budget=4096, page_size=256, gate_level=None) == 3584
+    assert limit(chunked_level=8, waiting=[(1, 3840)], budget=4096, page_size=256, gate_level=None) == 256
+    for kwargs in [dict(chunked_level=3, waiting=waiting), dict(chunked_level=None, waiting=waiting),
+                   dict(chunked_level=8, waiting=[(None, 10)]), dict(chunked_level=8, waiting=[(2, 4096)]),
+                   dict(chunked_level=8, waiting=[]), dict(chunked_level=8, waiting=waiting, budget=256)]:
+        kwargs = dict(budget=4096, page_size=256, gate_level=None) | kwargs
+        assert limit(**kwargs) is None, kwargs
+
+
 def test_prefill_gate():
     def at(level):
         return types.SimpleNamespace(mlfq_level=level)
