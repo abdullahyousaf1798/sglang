@@ -6,7 +6,8 @@
 #   nohup bash /workspace/scripts/pod_wait_and_launch.sh "<natural windows>" "<pinned windows>" [conversation-window] &
 set -uo pipefail
 natural=$1 pinned=$2 conv=${3:-}
-pod=${RUNPOD_POD_ID:-$(hostname)}
+# The pod id is in the container init environment, not in a non-login shell.
+pod=$(tr "\0" "\n" < /proc/1/environ | sed -n "s/^RUNPOD_POD_ID=//p"); pod=${pod:-$(hostname)}
 mkdir -p /workspace/logs /workspace/results
 pgrep -f "^bash /workspace/scripts/idle_stop.sh" >/dev/null \
   || (nohup setsid bash /workspace/scripts/idle_stop.sh >> "/workspace/logs/idle_stop_$pod.log" 2>&1 < /dev/null &)

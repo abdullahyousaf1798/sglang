@@ -9,7 +9,8 @@ natural=$1 pinned=$2 conv=${3:-}
 source /workspace/env.sh
 cd /opt/sglang
 R=/workspace/results
-rm -f /workspace/keep_running "/workspace/keep_running.${RUNPOD_POD_ID:-none}"
+pod=$(tr "\0" "\n" < /proc/1/environ | sed -n "s/^RUNPOD_POD_ID=//p"); pod=${pod:-$(hostname)}
+rm -f /workspace/keep_running "/workspace/keep_running.$pod"
 RUN="bash cache_aware_mlfq/run_mooncake_main.sh"
 ROWS="fcfs lpm shortest-prefill-first fcfs-interval8 lpm-mixed8k ours-final ours-final-yield fastserve-final"
 KEY="fcfs lpm-mixed8k shortest-prefill-first ours-final"
@@ -18,5 +19,5 @@ KEY="fcfs lpm-mixed8k shortest-prefill-first ours-final"
 [ -n "$pinned" ] && POOL=160000 TAG=m1 CONFIGS="$KEY" $RUN toolagent 11 1.0 $pinned
 [ -n "$pinned" ] && POOL=160000 TAG=m1-sd15-r2 CONFIGS="fcfs ours-final" $RUN toolagent 15 1.0 $pinned
 [ -n "$conv" ] && TAG=m1-sd15 CONFIGS="fcfs lpm-mixed8k ours-final" $RUN conversation 15 1.0 $conv
-date -u > "$R/.review_final_done.${RUNPOD_POD_ID:-$(hostname)}"
+date -u > "$R/.review_final_done.$pod"
 echo "final queue done: $(date -u)"
