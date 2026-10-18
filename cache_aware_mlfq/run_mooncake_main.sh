@@ -36,11 +36,14 @@ PORTED="--preempt-keep-kv --sj-mlfq-load-ahead"
 # as baselines, and the reduced design (cache-aware MLFQ + gate + kept KV, LRU eviction,
 # no load-ahead) on top of mixed 2k chunks with three preemption settings.
 MIXED2K="--enable-mixed-chunk --chunked-prefill-size 2048"
+# E1 showed 2k chunks overload this trace (4x the steps, each paying the decode rows'
+# attention); the default 8k chunk keeps throughput, so the later phases use it.
+MIXED8K="--enable-mixed-chunk"
 OURS="$MLFQ_BASE --sj-mlfq-cost cache-aware --preempt-keep-kv"
 # E3/E4 "final" rows: the reduced design of REVIEW.md. No profile (the cost model is
-# fitted online), kept KV, the gate, mixed 2k chunks and chunk yield; LRU eviction.
+# fitted online), kept KV, the gate, mixed 8k chunks and chunk yield; LRU eviction.
 MLFQ_ONLINE="--schedule-policy sj-mlfq --enable-priority-scheduling --retraction-policy priority"
-FINAL="$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED2K --sj-mlfq-chunk-yield"
+FINAL="$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED8K --sj-mlfq-chunk-yield"
 flags() {
   case $1 in
     fcfs) echo "--schedule-policy fcfs" ;;
@@ -64,14 +67,20 @@ flags() {
     fcfs-interval8) echo "--schedule-policy fcfs --prefill-decode-interval 8" ;;
     ours-gate-mixed2k) echo "$OURS --priority-scheduling-preemption-threshold 0 $GATE $MIXED2K" ;;
     ours-mixed2k) echo "$OURS --priority-scheduling-preemption-threshold 0 $MIXED2K" ;;
-    # E2: churn control
     ours-gate-mixed2k-nopreempt) echo "$OURS --disable-priority-preemption $GATE $MIXED2K" ;;
     ours-gate-mixed2k-thr3) echo "$OURS --priority-scheduling-preemption-threshold 3 $GATE $MIXED2K" ;;
+    # E1b: the SGLang-native candidates and the gate on 8k mixed chunks
+    lpm-mixed8k) echo "--schedule-policy lpm $MIXED8K" ;;
+    spf-mixed8k) echo "--schedule-policy shortest-prefill-first $MIXED8K" ;;
+    ours-gate-mixed8k) echo "$OURS --priority-scheduling-preemption-threshold 0 $GATE $MIXED8K" ;;
+    # E2: churn control (profile-based MLFQ, as in E1, so only preemption changes)
+    ours-gate-mixed8k-nopreempt) echo "$OURS --disable-priority-preemption $GATE $MIXED8K" ;;
+    ours-gate-mixed8k-thr3) echo "$OURS --priority-scheduling-preemption-threshold 3 $GATE $MIXED8K" ;;
     # E3/E4: final design, with FastServe placement as the ablation and no-yield for E3
     ours-final-nopreempt) echo "$FINAL --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
     ours-final-thr3) echo "$FINAL --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
     fastserve-final-thr3) echo "$FINAL --sj-mlfq-cost prompt --priority-scheduling-preemption-threshold 3" ;;
-    ours-final-thr3-noyield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED2K --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
+    ours-final-thr3-noyield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE $MIXED8K --sj-mlfq-cost cache-aware --priority-scheduling-preemption-threshold 3" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }
