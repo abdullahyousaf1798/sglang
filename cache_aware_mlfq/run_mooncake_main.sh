@@ -15,8 +15,9 @@ shift 3
 marker=/workspace/results/.mooncake_main_done
 rm -f "$marker"
 PROFILE=/opt/sglang/cache_aware_mlfq/prefill_profile_a100-sxm4-80gb.json
-MLFQ="--schedule-policy sj-mlfq --sj-mlfq-profile $PROFILE --enable-priority-scheduling
-  --priority-scheduling-preemption-threshold 0 --retraction-policy priority"
+MLFQ_BASE="--schedule-policy sj-mlfq --sj-mlfq-profile $PROFILE --enable-priority-scheduling
+  --retraction-policy priority"
+MLFQ="$MLFQ_BASE --priority-scheduling-preemption-threshold 0"
 # FastServe's mechanisms on SGLang: preempted KV is kept, evicted lowest level first
 # after finished conversations (4b), and loaded back ahead of admission (5).
 MECHANISMS="--preempt-keep-kv --radix-eviction-policy mlfq --sj-mlfq-load-ahead"
@@ -30,6 +31,11 @@ GATE=--sj-mlfq-prefill-gate
 #   ours                 cache-aware  two-tier
 # and the same four with -gate (fastserve-lru-gate, ours-lru-gate, fastserve-gate, ours-gate).
 PORTED="--preempt-keep-kv --sj-mlfq-load-ahead"
+# Review rows (REVIEW.md, E1/E2): SGLang's own Sarathi-style batching and cadence knob
+# as baselines, and the reduced design (cache-aware MLFQ + gate + kept KV, LRU eviction,
+# no load-ahead) on top of mixed 2k chunks with three preemption settings.
+MIXED2K="--enable-mixed-chunk --chunked-prefill-size 2048"
+OURS="$MLFQ_BASE --sj-mlfq-cost cache-aware --preempt-keep-kv"
 flags() {
   case $1 in
     fcfs) echo "--schedule-policy fcfs" ;;
@@ -45,6 +51,17 @@ flags() {
     ours) echo "$MLFQ --sj-mlfq-cost cache-aware $MECHANISMS" ;;
     ours-gate) echo "$MLFQ --sj-mlfq-cost cache-aware $MECHANISMS $GATE" ;;
     ours-no-load-ahead) echo "$MLFQ --sj-mlfq-cost cache-aware --preempt-keep-kv --radix-eviction-policy mlfq" ;;
+    # E1: the bar
+    fcfs-mixed8k) echo "--schedule-policy fcfs --enable-mixed-chunk" ;;
+    fcfs-mixed2k) echo "--schedule-policy fcfs $MIXED2K" ;;
+    lpm-mixed2k) echo "--schedule-policy lpm $MIXED2K" ;;
+    spf-mixed2k) echo "--schedule-policy shortest-prefill-first $MIXED2K" ;;
+    fcfs-interval8) echo "--schedule-policy fcfs --prefill-decode-interval 8" ;;
+    ours-gate-mixed2k) echo "$OURS --priority-scheduling-preemption-threshold 0 $GATE $MIXED2K" ;;
+    ours-mixed2k) echo "$OURS --priority-scheduling-preemption-threshold 0 $MIXED2K" ;;
+    # E2: churn control
+    ours-gate-mixed2k-nopreempt) echo "$OURS --disable-priority-preemption $GATE $MIXED2K" ;;
+    ours-gate-mixed2k-thr3) echo "$OURS --priority-scheduling-preemption-threshold 3 $GATE $MIXED2K" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }
