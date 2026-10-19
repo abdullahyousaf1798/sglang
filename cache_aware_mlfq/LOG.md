@@ -373,3 +373,35 @@ Returning turns (at least half the prompt is a prefix an earlier request sent; 4
   - In agent traffic, a turn that just finished is what the same session's next turn reuses seconds later, so evicting finished KV first is not reliably right.
   - Memory pressure was also moderate: 12-44 preemptions per run.
 - **Noise:** each window ran once. Differences under about 10% on the mean are within noise.
+
+## Final round: independent review, bug fixes and the final table (2026-10-18 to 19)
+
+**What changed and why.**
+- **An independent design review** (`REVIEW.md`) re-derived the design from the evidence. It kept skip-join MLFQ, cache-aware placement, the gate and kept KV; it demanded the missing SGLang-native baselines (mixed chunks, `--prefill-decode-interval`) and proposed an online cost model, chunk yield and churn control.
+- **Online cost model** (`OnlinePrefillCostModel`, `skip_join_mlfq.py`): without `--sj-mlfq-profile`, two scale factors (compute per uncached token, attention of new tokens over the cached prefix) are fitted by ridge least squares with forgetting from the prefill batches the scheduler runs. A side-script JSON was a merge blocker.
+  > **Before:** `--sj-mlfq-profile` required.
+  > **After:** `PrefillCostModel.from_profile(path) if path else OnlinePrefillCostModel()`, charged from `batch_result_processor` after every prefill batch.
+- **Chunk yield** (`--sj-mlfq-chunk-yield`, `mlfq_chunk_limit` in `skip_join_mlfq.py`, hooked where shortest-prefill-first's chunk limit is): waiting requests at a better level than the chunked request share its prefill batch.
+- **Preemption off** in the final design: thresholds 0 and 3 both churned (38 to 111 preemptions per run, long requests' p99 doubled).
+- **Upstream bug fixed** (`mem_cache/prefill_budget.py`, `scheduler.py`): a continuing chunk was handed its full size with the pool 100% locked, and allocation crashed the server. Now a starved chunk skips the step so decode retracts.
+  > **Before:** `if rem_tokens <= 0: return self.chunk_size  # make progress`
+  > **After:** bound by physically available tokens; `None` when nothing fits, and `_get_new_batch_prefill_raw` returns no batch that step.
+- **Harness:** `run_experiment.py` waits for the previous server's processes and 95 GB of free host memory (six pods shared one host). Results moved to a shared network volume after a stopped pod's local disk became unreachable when its host GPU was taken.
+
+**How it was tested.** 12 unit checks on the Mac; two rounds on A100s. Round 1 (0.4-minute windows, two pods): the baselines the review asked for, 2k versus 8k mixed chunks, three preemption settings. Round 2 (the final table): six pods, 1-minute windows 10, 25, 40, 55, slowdown 15 and 11, pinned and natural pools, eight rows, repeats of fcfs and ours, the conversation trace; 75 rows, 4 crashed before the fix and were rerun.
+
+**Results** (pinned 160k pool, slowdown 15, four 1-minute windows; change against fcfs, equal throughput):
+
+| Row | JCT mean | JCT p50 | JCT p99 | TTFT | TPOT |
+| --- | --- | --- | --- | --- | --- |
+| fcfs | 17.5 s | 14.0 s | 74.2 s | 8.3 s | 646 ms |
+| shortest-prefill-first (best native) | -12% | -6% | -17% | -54% | +62% |
+| lpm + mixed 8k | -12% | -15% | -1% | -24% | -54% |
+| FastServe placement | -24% | -43% | 0% | -28% | -81% |
+| **ours** | **-30%** | **-51%** | -1% | -40% | -89% |
+
+Full tables with the saturation, natural-pool and conversation rows: `STATUS.md` section 4 and `results/FINAL_TABLES.md`.
+
+**Reading.** The gate turns SGLang's prefill-first stall into a priority decision, and that is worth 30% of mean JCT on agent traffic with no loss for long requests; cache-aware placement adds a consistent 9% over FastServe's placement, all of it on returning turns. Mixed chunks, smaller chunks, preemption, two-tier eviction, load-ahead and chunk yield each either did nothing or hurt, and the table says so.
+
+**Lessons for the write-up.** Compare against SGLang's own best configuration, not fcfs; report long requests' tail; calibrate the slowdown on 1-minute windows (11 is saturation there); keep results on a network volume.
