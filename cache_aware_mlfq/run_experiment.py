@@ -147,6 +147,14 @@ def normalize_summary(workload_name: str, raw: dict) -> dict:
     }
 
 
+def read_sync_stamp() -> dict:
+    stamp = Path(__file__).resolve().parent / "SYNC_COMMIT"
+    if not stamp.exists():
+        return {"commit": None, "dirty": None}
+    commit, _, dirty = stamp.read_text().strip().partition(" ")
+    return {"commit": commit, "dirty": dirty == "dirty"}
+
+
 def wait_for_previous_server_to_exit(timeout_s: float = 180.0) -> None:
     """A killed server releases its pinned HiCache host pool asynchronously; starting the
     next one too early fails with "Not enough host memory available"."""
@@ -268,6 +276,8 @@ def main() -> None:
                               capture_output=True, text=True).stdout.strip(),
         "server_args": server_args(args.workload) + server_flags,
         "workload": workload,
+        # Written by sync_to_pod.sh on the Mac: the commit the synced tree came from.
+        "code": read_sync_stamp(),
     }
     (out / "config.json").write_text(json.dumps(config, indent=2))
 

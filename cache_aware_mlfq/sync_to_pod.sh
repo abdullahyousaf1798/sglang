@@ -8,7 +8,10 @@ BASE=bc76a6b819
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO"
 
-changed=$( { git diff --name-only --diff-filter=d "$BASE"; git ls-files --others --exclude-standard; } \
+# Provenance: every run records the commit its code came from (run_experiment.py).
+stamp=cache_aware_mlfq/SYNC_COMMIT
+printf '%s %s\n' "$(git rev-parse HEAD)" "$([ -z "$(git status --porcelain --untracked-files=no)" ] && echo clean || echo dirty)" > "$stamp"
+changed=$( { git diff --name-only --diff-filter=d "$BASE"; git ls-files --others --exclude-standard; echo "$stamp"; } \
   | grep -v '^cache_aware_mlfq/results/' | sort -u || true)
 deleted=$(git diff --name-only --diff-filter=D "$BASE" || true)
 
