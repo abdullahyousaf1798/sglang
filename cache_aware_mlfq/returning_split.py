@@ -16,7 +16,7 @@ sys.path.insert(0, str(HERE))
 import analyze_mooncake as am  # noqa: E402
 
 CONFIGS = ["fcfs", "lpm", "shortest-prefill-first", "fcfs-interval8", "lpm-mixed8k",
-           "fastserve-final", "ours-final", "ours-final-yield"]
+           "fastserve-final", "ours-final", "ours-final-yield", "ours-final-pause"]
 
 
 def split(results: Path, trace: str, pool: str, cfg: str, tag: str, windows, minutes: float):

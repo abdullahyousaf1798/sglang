@@ -86,6 +86,8 @@ flags() {
     ours-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
     ours-final-yield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption --sj-mlfq-chunk-yield" ;;
     fastserve-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost prompt --disable-priority-preemption" ;;
+    # Chunk pause (DESIGN.md 6.1): the gate also holds a started chunk.
+    ours-final-pause) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption --sj-mlfq-chunk-pause" ;;
     *) echo "unknown config: $1" >&2; return 1 ;;
   esac
 }

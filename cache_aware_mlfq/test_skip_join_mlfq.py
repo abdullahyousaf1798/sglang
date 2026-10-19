@@ -280,6 +280,39 @@ def test_prefill_gate():
     assert admitted == [1, 2]
 
 
+def test_chunk_pause():
+    def at(level):
+        return types.SimpleNamespace(mlfq_level=level)
+
+    gate, pause = mlfq_mod.SkipJoinMlfq.prefill_gate_level, mlfq_mod.SkipJoinMlfq.pause_chunk
+    # A level-8 chunk in progress waits while a level-2 request is mid-answer, and
+    # continues once every running request is at its level or worse, when nothing
+    # runs, or if it was never placed (then the gate does not apply to it).
+    assert pause(8, gate([at(2), at(7)]))
+    assert not pause(8, gate([at(8), at(9)]))
+    assert not pause(8, gate([]))
+    assert not pause(None, 2)
+
+    # The pause ends by itself: the running requests are charged every decode step
+    # and demoted, and nothing new is admitted meanwhile, so a more urgent request
+    # reaches the chunk's level within the chunk's own quantum (the quanta below
+    # it sum to less), plus one step of overshoot per level crossed.
+    q = mlfq_mod.SkipJoinMlfq(cost_mode="prompt", profile_path=str(PROFILE))
+    chunk, short = FakeReq(prompt_len=8000), FakeReq(prompt_len=256)
+    q.order([chunk, short])
+    assert short.mlfq_level < chunk.mlfq_level
+    assert pause(chunk.mlfq_level, gate([short]))
+    short_level, step_s, steps = short.mlfq_level, 0.040, 0
+    levels_crossed = chunk.mlfq_level - short_level
+    while pause(chunk.mlfq_level, gate([short])):
+        q.charge([short], step_s)
+        steps += 1
+    assert short.mlfq_level == chunk.mlfq_level
+    assert steps * step_s <= q.quantum_s(chunk.mlfq_level) + levels_crossed * step_s
+    print(f"chunk pause: a level-{chunk.mlfq_level} chunk waits {steps} decode steps "
+          f"({steps * step_s:.2f} s) for a level-{short_level} answer")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

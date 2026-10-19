@@ -130,13 +130,21 @@ class Schedule(msgspec.Struct):
         "With sj-mlfq, run a decode step instead of a new prefill while every running "
         "request is in a higher-priority queue than the next waiting request, so a long, "
         "low-priority prefill does not stall more urgent requests mid-answer "
-        "(FastServe's iteration-level preemption). A started chunked prefill continues.",
+        "(FastServe's iteration-level preemption). A started chunked prefill continues "
+        "unless --sj-mlfq-chunk-pause is also set.",
     ] = False
     sj_mlfq_chunk_yield: A[
         bool,
         "With sj-mlfq, cap a chunked prefill in progress so waiting requests in a more urgent "
         "queue fit in the same batch (shortest-prefill-first's chunk-sharing rule, at MLFQ "
         "levels), instead of waiting for the long prefill to finish.",
+    ] = False
+    sj_mlfq_chunk_pause: A[
+        bool,
+        "With --sj-mlfq-prefill-gate, hold a chunked prefill in progress at the gate too: "
+        "while a running request is in a more urgent queue than the chunked request, the "
+        "step is a decode step and the chunk continues later. Its finished chunks stay in "
+        "the cache meanwhile.",
     ] = False
     enable_priority_scheduling: A[
         bool,

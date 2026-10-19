@@ -216,6 +216,9 @@ class SchedulePolicy:
         self.mlfq_chunk_yield = get_schedule().sj_mlfq_chunk_yield
         if self.mlfq_chunk_yield and self.mlfq is None:
             raise ValueError("--sj-mlfq-chunk-yield requires --schedule-policy sj-mlfq")
+        self.mlfq_chunk_pause = get_schedule().sj_mlfq_chunk_pause
+        if self.mlfq_chunk_pause and not self.mlfq_prefill_gate:
+            raise ValueError("--sj-mlfq-chunk-pause requires --sj-mlfq-prefill-gate")
 
         # It is used to find the matching prefix for in-batch prefix caching.
         self.waiting_queue_radix_tree = RadixCache.create_simulated()

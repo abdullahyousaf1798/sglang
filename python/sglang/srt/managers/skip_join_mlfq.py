@@ -294,6 +294,26 @@ class SkipJoinMlfq:
         levels = [r.mlfq_level for r in running_reqs if r.mlfq_level is not None]
         return min(levels) if levels else None
 
+    @staticmethod
+    def pause_chunk(chunked_level: Optional[int], gate_level: Optional[int]) -> bool:
+        """Chunk pause: whether a chunked prefill in progress waits for the gate.
+
+        The gate decides whether a prefill starts; without the pause a started
+        chunk runs every step until it is done, so a long, low-priority prompt
+        still stalls more urgent decodes once its first chunk has gone in. With
+        the pause the continuation obeys the same rule: the chunk waits while a
+        running request is more urgent. Its finished chunks stay locked in the
+        cache between steps, so waiting costs nothing but the wait. Running
+        requests are charged every decode step and demoted past their quanta,
+        and no new prefill starts while the chunk waits, so the gate reopens
+        within about the chunk's own quantum (the quanta below it sum to less).
+        """
+        return (
+            chunked_level is not None
+            and gate_level is not None
+            and chunked_level > gate_level
+        )
+
     def quantum_s(self, level: int) -> float:
         return self._base_quantum_s * QUANTUM_MULTIPLIER**level
 

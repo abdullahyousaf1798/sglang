@@ -4086,12 +4086,21 @@ class Scheduler(
             if self.policy.mlfq_prefill_gate
             else None
         )
-        # A chunked prefill already started always continues.
+        # A chunked prefill already started continues, unless --sj-mlfq-chunk-pause
+        # holds it at the gate too: then no batch is built, a decode step runs, and
+        # the chunk stays as self.chunked_req with its finished chunks locked in the
+        # cache until no running request is more urgent than it.
         if (
             gate_level is not None
             and self.chunked_req is None
             and self.waiting_queue
             and self.waiting_queue[0].mlfq_level > gate_level
+        ):
+            return None, running_batch
+        if (
+            self.chunked_req is not None
+            and self.policy.mlfq_chunk_pause
+            and self.policy.mlfq.pause_chunk(self.chunked_req.mlfq_level, gate_level)
         ):
             return None, running_batch
 
