@@ -405,3 +405,26 @@ Full tables with the saturation, natural-pool and conversation rows: `STATUS.md`
 **Reading.** The gate turns SGLang's prefill-first stall into a priority decision, and that is worth 30% of mean JCT on agent traffic with no loss for long requests; cache-aware placement adds a consistent 9% over FastServe's placement, all of it on returning turns. Mixed chunks, smaller chunks, preemption, two-tier eviction, load-ahead and chunk yield each either did nothing or hurt, and the table says so.
 
 **Lessons for the write-up.** Compare against SGLang's own best configuration, not fcfs; report long requests' tail; calibrate the slowdown on 1-minute windows (11 is saturation there); keep results on a network volume.
+
+## Chunk pause (2026-10-19 to 20)
+
+**What changed and why.** `DESIGN.md` 6.1 was the first open gap: the gate decides whether a new prefill starts, but a chunked prefill already in progress ran every step until it was done, so a long, low-priority prompt still stalled more urgent decodes once its first chunk had gone in. `--sj-mlfq-chunk-pause` applies the gate to the continuation as well.
+> **Before** (`Scheduler._get_new_batch_prefill_raw`): the gate check carried `and self.chunked_req is None`, so a started chunk always continued.
+> **After:** a second check right after it: `if self.chunked_req is not None and self.policy.mlfq_chunk_pause and self.policy.mlfq.pause_chunk(self.chunked_req.mlfq_level, gate_level): return None, running_batch`. `pause_chunk` is true while the chunk's level is worse than the most urgent running request's. No batch is built, a decode step runs, and the chunk stays as `self.chunked_req`; its finished chunks were checkpointed into the tree once by `get_next_batch_to_run` (which sets `prefix_len = extend_end`), so later steps checkpoint nothing and the next prefill resumes from there. The starved-chunk guard is unchanged. The wait is bounded: running requests are charged and demoted every decode step and nothing new is admitted meanwhile, so the gate reopens within about the chunk's own quantum (the quanta below it sum to less).
+
+**How it was tested.** Unit check `test_chunk_pause` (13 checks pass): the rule itself, and a level-7 chunk waiting 37 decode steps (1.48 s) for a level-1 answer under the 4090 profile, inside the bound. Row `ours-final-pause` (ours-final plus the flag) on three A100 pods: pinned 160k pool, 1-minute windows 10, 25, 40 and 55 at slowdown 15, and the natural pool on windows 10 and 25. Six rows, none failed.
+
+**Results** (change against fcfs):
+
+| Pool | Row | JCT mean | JCT p50 | JCT p99 | TTFT | TPOT |
+| --- | --- | --- | --- | --- | --- | --- |
+| pinned, 4 windows | ours | 12.28 s (-30%) | 6.87 s (-51%) | 73.0 s (-1%) | 5.08 s (-40%) | 69 ms (-89%) |
+| pinned, 4 windows | ours + pause | 12.11 s (-31%) | 6.74 s (-52%) | 73.1 s (-1%) | 5.01 s (-40%) | 63 ms (-90%) |
+| natural, 2 windows | ours | 13.07 s (-41%) | 4.42 s (-72%) | 95.4 s (-7%) | 3.99 s (-46%) | 69 ms (-94%) |
+| natural, 2 windows | ours + pause | 14.23 s (-36%) | 6.12 s (-62%) | 102.8 s (-2%) | 5.19 s (-29%) | 87 ms (-92%) |
+
+Per window, mean JCT: pinned 12.1 / 14.2 / 10.3 / 11.9 s against ours 12.6 / 15.0 / 10.1 / 11.4 s; natural 12.5 / 16.0 s against 11.6 / 14.6 s. Returning turns: pinned 5.0 against 5.2 s; natural 6.0 against 5.0 s.
+
+**Reading.** On the pinned pool the pause is within noise (-1.4% on the mean, where the ours repeat differed by 0.5% and the fcfs repeat by 5%); it wins the two windows where the gate gained least and loses the other two. On the natural pool it costs 9% of the mean and 1.2 s of TTFT. The reason is structural: SGLang tracks one chunked request at a time, so while the chunk waits at the gate nothing else can be admitted either, and the more-urgent arrivals that would have shared the prefill batch wait behind the paused chunk. With the larger pool more requests are running at urgent levels, the chunk pauses more often, and the blocked admissions cost more than the decode steps gained. The stall the gate fixes is at admission, not continuation. The flag stays on the research branch for the ablation and out of the PR.
+
+**Lessons.** The six pods' host went through a driver upgrade during the day: container creation failed for two hours (nvidia-smi missing, then "Driver/library version mismatch"), then CUDA initialization failed with error 802 for three more hours while nvidia-smi itself worked. The pod record's CUDA version and nvidia-smi's fabric-state field were both misleading; a one-line torch allocation on the pod before syncing is the only reliable readiness check. Wall time 9.7 hours for 44 minutes of runs. Pod cost $7.8, of which $6.4 was the run phase (about $1.8 of it idle before the 20-minute idle stop) and the rest failed starts and hourly probes.

@@ -122,6 +122,7 @@ Short outputs (<= 30 tokens) and long outputs (> 200), mean over windows:
 | ours-final | 2 | 13.07 (-41%) | 4.42 (-72%) | 95.43 (-7%) | 3.99 (-46%) | 69.30 (-94%) | 297.00 (-80%) | 0.49 | 0 | 894/894 |
 | ours-final-yield | 2 | 13.47 (-40%) | 4.68 (-71%) | 98.85 (-4%) | 3.79 (-48%) | 113.95 (-90%) | 295.06 (-80%) | 0.49 | 0 | 894/894 |
 | fastserve-final | 2 | 13.58 (-39%) | 5.90 (-63%) | 95.50 (-7%) | 4.41 (-40%) | 106.76 (-90%) | 439.57 (-70%) | 0.49 | 0 | 894/894 |
+| ours-final-pause | 2 | 14.23 (-36%) | 6.12 (-62%) | 102.75 (-2%) | 5.19 (-29%) | 86.90 (-92%) | 451.14 (-69%) | 0.49 | 0 | 894/894 |
 | fcfs-interval8 | 2 | 16.77 (-25%) | 12.50 (-21%) | 97.95 (-5%) | 7.80 (+8%) | 68.90 (-94%) | 722.10 (-49%) | 0.49 | 0 | 894/894 |
 | lpm-mixed8k | 2 | 19.37 (-13%) | 14.10 (-11%) | 103.70 (+1%) | 5.41 (-27%) | 386.51 (-65%) | 581.36 (-59%) | 0.49 | 0 | 894/894 |
 | lpm | 2 | 20.72 (-7%) | 15.03 (-5%) | 99.48 (-3%) | 5.16 (-29%) | 1424.98 (+29%) | 1292.07 (-9%) | 0.49 | 0 | 894/894 |
@@ -134,6 +135,7 @@ Mean JCT per window:
 | ours-final | 11.6 | 14.6 |
 | ours-final-yield | 11.8 | 15.2 |
 | fastserve-final | 12.1 | 15.1 |
+| ours-final-pause | 12.5 | 16.0 |
 | fcfs-interval8 | 15.1 | 18.4 |
 | lpm-mixed8k | 17.0 | 21.7 |
 | lpm | 18.8 | 22.6 |
@@ -146,6 +148,7 @@ Short outputs (<= 30 tokens) and long outputs (> 200), mean over windows:
 | ours-final | 2.9 | 1.9 | 28.6 | 106.8 |
 | ours-final-yield | 2.9 | 1.6 | 29.5 | 116.2 |
 | fastserve-final | 4.1 | 2.8 | 28.2 | 106.1 |
+| ours-final-pause | 4.1 | 2.9 | 29.6 | 122.9 |
 | fcfs-interval8 | 7.8 | 6.8 | 29.9 | 107.7 |
 | lpm-mixed8k | 9.4 | 2.4 | 32.1 | 126.6 |
 | lpm | 14.3 | 2.5 | 29.6 | 108.0 |
@@ -266,6 +269,7 @@ Short outputs (<= 30 tokens) and long outputs (> 200), mean over windows:
 ## mooncake160k / toolagent / m1-sd15: windows [10, 25, 40, 55]
 | config | windows | JCT mean | JCT p50 | JCT p99 | TTFT | TPOT ms | per-token ms | thr | preempt | done |
 |---|---|---|---|---|---|---|---|---|---|---|
+| ours-final-pause | 4 | 12.11 (-31%) | 6.74 (-52%) | 73.13 (-1%) | 5.01 (-40%) | 63.12 (-90%) | 373.44 (-69%) | 0.48 | 0 | 1738/1738 |
 | ours-final | 4 | 12.28 (-30%) | 6.87 (-51%) | 73.03 (-1%) | 5.08 (-40%) | 69.08 (-89%) | 398.83 (-68%) | 0.48 | 0 | 1738/1738 |
 | ours-final-yield | 4 | 12.39 (-30%) | 6.31 (-56%) | 73.98 (-0%) | 4.59 (-47%) | 188.53 (-71%) | 406.24 (-67%) | 0.48 | 2 | 1738/1738 |
 | ours-final-thr3 | 1 | 12.87 (-22%) | 10.11 (-31%) | 56.74 (-1%) | 3.84 (-46%) | 149.47 (-81%) | 365.23 (-69%) | 0.48 | 0 | 441/441 |
@@ -279,6 +283,7 @@ Short outputs (<= 30 tokens) and long outputs (> 200), mean over windows:
 Mean JCT per window:
 | config | w10 | w25 | w40 | w55 |
 |---|---|---|---|---|
+| ours-final-pause | 12.1 | 14.2 | 10.3 | 11.9 |
 | ours-final | 12.6 | 15.0 | 10.1 | 11.4 |
 | ours-final-yield | 12.0 | 15.4 | 10.1 | 12.0 |
 | ours-final-thr3 | - | - | - | 12.9 |
@@ -292,6 +297,7 @@ Mean JCT per window:
 Short outputs (<= 30 tokens) and long outputs (> 200), mean over windows:
 | config | short JCT | short TTFT | long JCT | long p99 |
 |---|---|---|---|---|
+| ours-final-pause | 3.6 | 2.7 | 24.4 | 84.6 |
 | ours-final | 3.8 | 2.8 | 24.6 | 90.2 |
 | ours-final-yield | 3.8 | 2.0 | 24.8 | 93.9 |
 | ours-final-thr3 | 4.4 | 1.8 | 23.7 | 71.2 |
