@@ -406,6 +406,14 @@ Full tables with the saturation, natural-pool and conversation rows: `STATUS.md`
 
 **Lessons for the write-up.** Compare against SGLang's own best configuration, not fcfs; report long requests' tail; calibrate the slowdown on 1-minute windows (11 is saturation there); keep results on a network volume.
 
+## Deterministic charging across tensor-parallel ranks (2026-10-20)
+
+**What was wrong.** With tensor parallelism every rank runs its own scheduler on the same broadcast request stream and must build identical batches, or the collective forward passes mismatch. `_charge_mlfq` measured each batch's time on each rank's own clock; demotion is a threshold on that time and the online cost model is fitted from it, so a request straddling its quantum could be demoted on one rank and not another, levels and queue order could diverge, and the gate could open on one rank and stay shut on another. All runs were TP 1, so it never fired.
+> **Before** (`batch_result_processor._charge_mlfq`): `elapsed_s = time.monotonic() - batch.launch_ts; self.mlfq.charge(batch.reqs, elapsed_s)`; `SkipJoinMlfq.order` and `charge` called `time.monotonic()` for entry times and the starvation check.
+> **After:** `now, elapsed_s = attn_cp_tp_broadcast_pyobj([now, now - batch.launch_ts])` (the primitive the request receiver uses every iteration; a no-op at TP 1), then `charge(batch.reqs, elapsed_s, now=now)`; the policy keeps `now` as its clock and reads no wall clock. One CPU broadcast per batch result when TP > 1.
+
+**How it was tested.** `test_policy_clock_is_the_charged_timing_not_wall_time` (14 checks pass): identical charged sequences give identical levels, entry and service times regardless of real time between calls, and starvation promotion follows the policy clock. Not yet run on a TP > 1 pod. Behaviour at TP 1 is unchanged except that the starvation check now uses the last batch's timestamp instead of the current wall time, at most one step stale.
+
 ## Chunk pause (2026-10-19 to 20)
 
 **What changed and why.** `DESIGN.md` 6.1 was the first open gap: the gate decides whether a new prefill starts, but a chunked prefill already in progress ran every step until it was done, so a long, low-priority prompt still stalled more urgent decodes once its first chunk had gone in. `--sj-mlfq-chunk-pause` applies the gate to the continuation as well.

@@ -17,6 +17,7 @@ import numpy as np
 import torch
 
 from sglang.srt.disaggregation.utils import DisaggregationMode
+from sglang.srt.distributed.communication_op import attn_cp_tp_broadcast_pyobj
 from sglang.srt.environ import envs
 from sglang.srt.layers.logits_processor import (
     LogitsProcessorOutput,
@@ -121,8 +122,11 @@ class SchedulerBatchResultProcessor:
         # launch_ts is set in Scheduler.run_batch; with overlap scheduling this
         # runs once the batch's outputs are on the host, i.e. after its forward.
         if self.mlfq is not None and batch.launch_ts is not None:
-            elapsed_s = time.monotonic() - batch.launch_ts
-            self.mlfq.charge(batch.reqs, elapsed_s)
+            now = time.monotonic()
+            # Every attention rank runs this scheduler and must demote and place
+            # identically, so one rank's timing is used by all (a no-op at TP 1).
+            now, elapsed_s = attn_cp_tp_broadcast_pyobj([now, now - batch.launch_ts])
+            self.mlfq.charge(batch.reqs, elapsed_s, now=now)
             self.mlfq.observe_batch(batch, elapsed_s)
 
     def process_batch_result_prebuilt(self, batch: ScheduleBatch):

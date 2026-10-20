@@ -7,6 +7,12 @@ used up its level's quantum; a request left waiting too long is promoted back to
 level 0. The level is stored as ``req.priority = -level``, so SGLang's priority
 preemption, retraction and eviction all follow MLFQ order.
 
+Every attention-parallel rank runs its own scheduler and must place, demote and
+promote identically, so the policy never reads the wall clock: ``charge`` receives
+each batch's elapsed time and timestamp as measured on one rank and broadcast to
+the others (``batch_result_processor._charge_mlfq``), and keeps that timestamp as
+its clock for level entry times and the starvation check.
+
 Placement cost is either FastServe's (a fresh prefill of the whole prompt) or
 cache-aware (the uncached suffix prefilled on top of the cached prefix). The cost
 comes from a profiled latency grid when one is given, otherwise from a seed cost
@@ -27,7 +33,6 @@ import bisect
 import json
 import logging
 import math
-import time
 from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Sequence, Tuple
 
@@ -219,13 +224,15 @@ class SkipJoinMlfq:
         self._online_model = OnlinePrefillCostModel() if profile_path is None else None
         self._cost_model = self._online_model or PrefillCostModel(profile_path)
         self._steps = 0
+        # Timestamp of the last charged batch result, the same on every rank.
+        self._clock = 0.0
         self._placed_per_level: Counter = Counter()
         self._demotions = 0
         self._promotions = 0
 
     def order(self, waiting_queue: List[Req]) -> None:
         """Place new requests, promote starved ones, then sort by (level, level entry time)."""
-        now = time.monotonic()
+        now = self._clock
         for req in waiting_queue:
             if req.mlfq_level is None:
                 self._place(req, now)
@@ -257,9 +264,13 @@ class SkipJoinMlfq:
                 self._claim_strategy.claim(node, req.priority)
                 node = node.parent
 
-    def charge(self, reqs: List[Req], elapsed_s: float) -> None:
-        """Charge one forward pass to each request in it; demote those past their quantum."""
-        now = time.monotonic()
+    def charge(self, reqs: List[Req], elapsed_s: float, *, now: float) -> None:
+        """Charge one forward pass to each request in it; demote those past their quantum.
+
+        ``elapsed_s`` and ``now`` (the pass's end timestamp) must be the same on every
+        rank; they advance the policy's clock.
+        """
+        self._clock = now = max(self._clock, now)
         for req in reqs:
             if req.mlfq_level is None:
                 continue

@@ -67,9 +67,9 @@ def test_demotion_after_quantum():
     req = FakeReq(prompt_len=5000, cached=4500)
     q.order([req])
     assert req.mlfq_level == 3  # quantum 80 ms
-    q.charge([req], 0.050)
+    q.charge([req], 0.050, now=1.0)
     assert req.mlfq_level == 3 and abs(req.mlfq_service_s - 0.050) < 1e-9
-    q.charge([req], 0.040)
+    q.charge([req], 0.040, now=1.1)
     assert req.mlfq_level == 4 and req.mlfq_service_s == 0.0 and req.priority == -4
 
 
@@ -79,7 +79,7 @@ def test_order_by_level_then_entry_time():
     short_old, short_new = FakeReq(prompt_len=256), FakeReq(prompt_len=256)
     queue = [long_first, short_old]
     q.order(queue)
-    time.sleep(0.001)
+    q.charge([], 0.0, now=0.5)  # the clock advances only through charged batches
     queue.append(short_new)
     q.order(queue)
     assert queue == [short_old, short_new, long_first]
@@ -305,12 +305,43 @@ def test_chunk_pause():
     short_level, step_s, steps = short.mlfq_level, 0.040, 0
     levels_crossed = chunk.mlfq_level - short_level
     while pause(chunk.mlfq_level, gate([short])):
-        q.charge([short], step_s)
         steps += 1
+        q.charge([short], step_s, now=steps * step_s)
     assert short.mlfq_level == chunk.mlfq_level
     assert steps * step_s <= q.quantum_s(chunk.mlfq_level) + levels_crossed * step_s
     print(f"chunk pause: a level-{chunk.mlfq_level} chunk waits {steps} decode steps "
           f"({steps * step_s:.2f} s) for a level-{short_level} answer")
+
+
+def test_policy_clock_is_the_charged_timing_not_wall_time():
+    # Every TP rank runs the scheduler and must reach the same levels, so the policy
+    # reads no wall clock: the same charged (elapsed, now) sequence gives the same
+    # state no matter how much real time passes between calls.
+    def run(sleep_s):
+        q = mlfq_mod.SkipJoinMlfq(cost_mode="prompt", profile_path=str(PROFILE))
+        long_req, short_req = FakeReq(prompt_len=8000), FakeReq(prompt_len=256)
+        queue = [long_req, short_req]
+        q.order(queue)
+        for i in range(5):
+            time.sleep(sleep_s)
+            q.charge([short_req], 0.040, now=0.1 * (i + 1))
+            q.order(queue)
+        return [(r.mlfq_level, r.mlfq_level_entry_time, r.mlfq_last_service_time) for r in queue]
+
+    assert run(0.0) == run(0.002)
+
+    # Starvation promotion follows the policy clock too: a request last served at
+    # clock 0 is promoted once a charged batch moves the clock past 3 s, and not
+    # before, however long the wall clock says it waited.
+    for now, promoted in [(2.0, False), (3.5, True)]:
+        q = mlfq_mod.SkipJoinMlfq(cost_mode="prompt", profile_path=str(PROFILE))
+        starved = FakeReq(prompt_len=8000)
+        q.order([starved])
+        assert starved.mlfq_level > 0
+        q.charge([], 0.0, now=now)
+        for _ in range(mlfq_mod.STARVATION_CHECK_INTERVAL):
+            q.order([starved])
+        assert (starved.mlfq_level == 0) is promoted, now
 
 
 if __name__ == "__main__":
