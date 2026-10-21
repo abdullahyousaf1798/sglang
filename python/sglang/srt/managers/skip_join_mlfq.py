@@ -1,7 +1,10 @@
 """Skip-join multi-level feedback queue (FastServe) with optional cache-aware placement.
 
 A request joins the lowest queue level whose quantum covers its predicted first
-iteration (its prefill), instead of always starting at the top. After each
+iteration (its prefill), instead of always starting at the top. While it waits and
+has not run yet, it is re-priced every ordering against the current cache and may
+only move to a better level, so a request whose shared prefix another request has
+just prefilled is not stuck at the level it was given before. After each
 forward pass it is charged the pass's wall time and drops one level once it has
 used up its level's quantum; a request left waiting too long is promoted back to
 level 0. The level is stored as ``req.priority = -level``, so SGLang's priority
@@ -34,7 +37,7 @@ import json
 import logging
 import math
 from collections import Counter
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Sequence, Set, Tuple
 
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req, ScheduleBatch
@@ -229,13 +232,25 @@ class SkipJoinMlfq:
         self._placed_per_level: Counter = Counter()
         self._demotions = 0
         self._promotions = 0
+        self._repricings = 0
 
-    def order(self, waiting_queue: List[Req]) -> None:
-        """Place new requests, promote starved ones, then sort by (level, level entry time)."""
+    def order(
+        self,
+        waiting_queue: List[Req],
+        temporary_deprioritized: Optional[Set[str]] = None,
+    ) -> None:
+        """Place new requests, promote starved ones, then sort by (level, level entry time).
+
+        ``temporary_deprioritized`` is SGLang's in-batch prefix-caching set: waiting
+        requests whose uncached prefix another waiting request is about to prefill.
+        They go to the back for this ordering so the prefix is computed once.
+        """
         now = self._clock
         for req in waiting_queue:
             if req.mlfq_level is None:
                 self._place(req, now)
+            elif req.mlfq_runs == 0:
+                self._reprice(req)
         self._steps += 1
         if self._steps % STARVATION_CHECK_INTERVAL == 0:
             for req in waiting_queue:
@@ -244,12 +259,17 @@ class SkipJoinMlfq:
                     self._set_level(req, 0)
                     self._promotions += 1
             logger.info(
-                "sj-mlfq: placed per level %s, demotions %d, starvation promotions %d",
+                "sj-mlfq: placed per level %s, demotions %d, starvation promotions %d, "
+                "repricings %d",
                 dict(sorted(self._placed_per_level.items())),
                 self._demotions,
                 self._promotions,
+                self._repricings,
             )
-        waiting_queue.sort(key=lambda r: (r.mlfq_level, r.mlfq_level_entry_time))
+        deprioritized = temporary_deprioritized or ()
+        waiting_queue.sort(
+            key=lambda r: (r.rid in deprioritized, r.mlfq_level, r.mlfq_level_entry_time)
+        )
         if self._claim_strategy is not None:
             self._claim_waiting_prefixes(waiting_queue)
 
@@ -274,6 +294,7 @@ class SkipJoinMlfq:
         for req in reqs:
             if req.mlfq_level is None:
                 continue
+            req.mlfq_runs += 1
             req.mlfq_service_s += elapsed_s
             req.mlfq_last_service_time = now
             if req.mlfq_service_s > self.quantum_s(req.mlfq_level):
@@ -328,7 +349,7 @@ class SkipJoinMlfq:
     def quantum_s(self, level: int) -> float:
         return self._base_quantum_s * QUANTUM_MULTIPLIER**level
 
-    def _place(self, req: Req, now: float) -> None:
+    def _placement_level(self, req: Req) -> int:
         prompt_len = len(req.origin_input_ids)
         if self._cache_aware:
             # Counts both GPU-resident and CPU-resident (HiCache) prefix hits.
@@ -336,13 +357,25 @@ class SkipJoinMlfq:
             cost_s = self._cost_model.predict_s(uncached=prompt_len - cached, cached=cached)
         else:
             cost_s = self._cost_model.predict_s(uncached=prompt_len, cached=0)
-        level = 0
-        if cost_s > self._base_quantum_s:
-            level = math.ceil(math.log(cost_s / self._base_quantum_s, QUANTUM_MULTIPLIER))
+        if cost_s <= self._base_quantum_s:
+            return 0
+        return math.ceil(math.log(cost_s / self._base_quantum_s, QUANTUM_MULTIPLIER))
+
+    def _place(self, req: Req, now: float) -> None:
+        level = self._placement_level(req)
         self._set_level(req, level)
         req.mlfq_level_entry_time = now
         req.mlfq_last_service_time = now
         self._placed_per_level[level] += 1
+
+    def _reprice(self, req: Req) -> None:
+        # Only toward a better level: a promoted request keeps level 0, and the cost
+        # never rises while HiCache counts host-resident prefixes as cached. The level
+        # entry time stays, so the request keeps its place among its new peers.
+        level = self._placement_level(req)
+        if level < req.mlfq_level:
+            self._set_level(req, level)
+            self._repricings += 1
 
     @staticmethod
     def _set_level(req: Req, level: int) -> None:

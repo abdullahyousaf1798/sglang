@@ -414,6 +414,14 @@ Full tables with the saturation, natural-pool and conversation rows: `STATUS.md`
 
 **How it was tested.** `test_policy_clock_is_the_charged_timing_not_wall_time` (14 checks pass): identical charged sequences give identical levels, entry and service times regardless of real time between calls, and starvation promotion follows the policy clock. Not yet run on a TP > 1 pod. Behaviour at TP 1 is unchanged except that the starvation check now uses the last batch's timestamp instead of the current wall time, at most one step stale.
 
+## Re-pricing waiting requests (2026-10-20)
+
+**What was wrong.** A level was assigned once, from the cache as it was when the request first appeared in the queue, and never recomputed from the cache. Three prefills arriving together with a shared long prefix were all priced on the full prompt. After the first had prefilled the prefix, the matching that runs every iteration saw the others' uncached suffix shrink, so their admission and actual prefill were right, but their level still said "expensive": they sorted behind newer requests at better levels and were held at the gate behind short answers in flight, although their real prefill had become small. The sj-mlfq ordering branch also ignored SGLang's in-batch prefix-caching set, so siblings of a short uncached prefix could be admitted into one batch and each compute it.
+> **Before** (`SkipJoinMlfq.order`): `if req.mlfq_level is None: self._place(req, now)`; sort by `(level, entry time)`; `calc_priority` called `order(waiting_queue)`.
+> **After:** `elif req.mlfq_runs == 0: self._reprice(req)`, where `_reprice` recomputes the placement level from the current match and applies it only if better, keeping the level entry time; sort by `(rid in deprioritized, level, entry time)`; `calc_priority` passes `temporary_deprioritized`. `Req.mlfq_runs` counts charged passes, so retracted requests keep their demoted level and promoted requests stay at 0.
+
+**How it was tested.** Two unit checks (16 pass): re-pricing moves only down and only before the first run, keeps the entry time, and never undoes a promotion; a deprioritised sibling goes to the back for one ordering. Not measured on the A100; how often the case occurs in the trace (a sharing partner still being prefilled at arrival) can be counted offline.
+
 ## Chunk pause (2026-10-19 to 20)
 
 **What changed and why.** `DESIGN.md` 6.1 was the first open gap: the gate decides whether a new prefill starts, but a chunked prefill already in progress ran every step until it was done, so a long, low-priority prompt still stalled more urgent decodes once its first chunk had gone in. `--sj-mlfq-chunk-pause` applies the gate to the continuation as well.

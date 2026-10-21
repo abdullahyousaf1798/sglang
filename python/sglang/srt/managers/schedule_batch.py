@@ -1431,6 +1431,7 @@ class Req(ReqDllmMixin):
         # Skip-join MLFQ state (managers/skip_join_mlfq.py); a None level means not placed yet.
         # It survives retraction and preemption, so a returning request keeps its level.
         self.mlfq_level: Optional[int] = None
+        self.mlfq_runs: int = 0  # forward passes charged; 0 means never run
         self.mlfq_service_s: float = 0.0
         self.mlfq_level_entry_time: float = 0.0
         self.mlfq_last_service_time: float = 0.0

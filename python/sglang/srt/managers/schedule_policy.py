@@ -261,7 +261,7 @@ class SchedulePolicy:
                     waiting_queue, temporary_deprioritized, processed_tokens
                 )
             elif policy == CacheAwarePolicy.SJ_MLFQ:
-                self.mlfq.order(waiting_queue)
+                self.mlfq.order(waiting_queue, temporary_deprioritized)
             elif policy == CacheAwarePolicy.SHORTEST_PREFILL_FIRST:
                 SchedulePolicy._sort_by_shortest_prefill(
                     waiting_queue, temporary_deprioritized

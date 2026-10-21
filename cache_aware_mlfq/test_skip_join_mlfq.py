@@ -31,12 +31,17 @@ class FakeNode:
         self.mlfq_claim_step = -1
 
 
+_rids = iter(range(10**6))
+
+
 class FakeReq:
     def __init__(self, prompt_len: int, cached: int = 0):
+        self.rid = f"r{next(_rids)}"
         self.origin_input_ids = [0] * prompt_len
         self.num_matched_prefix_tokens = cached
         self.priority = None
         self.mlfq_level = None
+        self.mlfq_runs = 0
         self.mlfq_service_s = 0.0
         self.mlfq_level_entry_time = 0.0
         self.mlfq_last_service_time = 0.0
@@ -342,6 +347,49 @@ def test_policy_clock_is_the_charged_timing_not_wall_time():
         for _ in range(mlfq_mod.STARVATION_CHECK_INTERVAL):
             q.order([starved])
         assert (starved.mlfq_level == 0) is promoted, now
+
+
+def test_waiting_request_is_repriced_only_down_and_only_before_it_runs():
+    q = mlfq_mod.SkipJoinMlfq(cost_mode="cache-aware", profile_path=str(PROFILE))
+    sibling = FakeReq(prompt_len=8000)  # placed before its shared prefix is cached
+    q.order([sibling])
+    placed, entry = sibling.mlfq_level, sibling.mlfq_level_entry_time
+    assert placed > 3
+    # Another request prefilled the shared 7.5k prefix: the next ordering re-prices it.
+    sibling.num_matched_prefix_tokens = 7500
+    q.order([sibling])
+    assert sibling.mlfq_level < placed and sibling.priority == -sibling.mlfq_level
+    assert sibling.mlfq_level_entry_time == entry  # keeps its place among its new peers
+    repriced = sibling.mlfq_level
+    # The cache no longer holds it (no HiCache): the level does not go back up.
+    sibling.num_matched_prefix_tokens = 0
+    q.order([sibling])
+    assert sibling.mlfq_level == repriced
+    # Once it has run, charging owns the level: a full cache hit no longer re-prices it
+    # (a retracted request with --preempt-keep-kv would otherwise jump to level 0).
+    q.charge([sibling], 0.040, now=1.0)
+    sibling.num_matched_prefix_tokens = 8000
+    q.order([sibling])
+    assert sibling.mlfq_level == repriced
+    # A starvation promotion to level 0 is never undone by re-pricing.
+    waiting = FakeReq(prompt_len=8000)
+    q.order([waiting])
+    q.charge([], 0.0, now=1.0 + mlfq_mod.STARVATION_S + 1)
+    for _ in range(mlfq_mod.STARVATION_CHECK_INTERVAL):
+        q.order([waiting])
+    assert waiting.mlfq_level == 0
+
+
+def test_in_batch_prefix_siblings_go_to_the_back_for_one_ordering():
+    q = mlfq_mod.SkipJoinMlfq(cost_mode="cache-aware", profile_path=str(PROFILE))
+    first, second, other = FakeReq(prompt_len=8000), FakeReq(prompt_len=8000), FakeReq(prompt_len=256)
+    queue = [first, second, other]
+    # SGLang's in-batch prefix caching marks the second sibling: the first will prefill
+    # their shared prefix, so the second waits one round instead of duplicating it.
+    q.order(queue, temporary_deprioritized={second.rid})
+    assert queue == [other, first, second]
+    q.order(queue)  # no longer marked: back in level order, entry time breaks the tie
+    assert queue == [other, first, second] and first.mlfq_level == second.mlfq_level
 
 
 if __name__ == "__main__":
