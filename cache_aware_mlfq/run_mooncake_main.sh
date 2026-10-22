@@ -108,7 +108,7 @@ for start in "$@"; do
     python cache_aware_mlfq/run_experiment.py --name "$prefix-$trace-$config-s$start${TAG:+-$TAG}" \
       --workload mooncake --trace "/workspace/data/mooncake_$trace.jsonl" \
       --start-min "$start" --minutes "$minutes" --slowdown "$slowdown" \
-      -- $server_flags $pool_flags \
+      -- $server_flags $pool_flags ${EXTRA_FLAGS:-} \
       || echo "FAILED: $config window $start"
   done
 done
