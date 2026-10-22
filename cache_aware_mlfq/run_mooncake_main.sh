@@ -88,6 +88,7 @@ flags() {
     # --preempt-keep-kv lives in PR #45686, so neither flag exists on that branch. Run
     # it under the PR venv (/opt/venvs/sglang-pr) so the server is the PR checkout.
     ours-pr) echo "$MLFQ_ONLINE --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
+    ours-pr-tp2) echo "$MLFQ_ONLINE --sj-mlfq-cost cache-aware --disable-priority-preemption --tp 2" ;;
     ours-final-yield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption --sj-mlfq-chunk-yield" ;;
     fastserve-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost prompt --disable-priority-preemption" ;;
     # Chunk pause (DESIGN.md 6.1): the gate also holds a started chunk.
