@@ -84,6 +84,10 @@ flags() {
     # Final table (REVIEW.md, revised after the overnight runs): no preemption, no mixed
     # chunk, online cost model; yield as its own row; FastServe placement as the ablation.
     ours-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
+    # The policy as submitted upstream (PR #45688): the gate is unconditional there and
+    # --preempt-keep-kv lives in PR #45686, so neither flag exists on that branch. Run
+    # it under the PR venv (/opt/venvs/sglang-pr) so the server is the PR checkout.
+    ours-pr) echo "$MLFQ_ONLINE --sj-mlfq-cost cache-aware --disable-priority-preemption" ;;
     ours-final-yield) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost cache-aware --disable-priority-preemption --sj-mlfq-chunk-yield" ;;
     fastserve-final) echo "$MLFQ_ONLINE --preempt-keep-kv $GATE --sj-mlfq-cost prompt --disable-priority-preemption" ;;
     # Chunk pause (DESIGN.md 6.1): the gate also holds a started chunk.
