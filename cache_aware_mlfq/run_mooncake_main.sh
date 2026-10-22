@@ -10,7 +10,9 @@
 # without it the pool is whatever fits, and rows are named mooncake-*. TAG is appended to
 # the row name (e.g. m1 for 1-minute windows, m1-r2 for a repeat, m1-sd9 for slowdown 9).
 set -uo pipefail
-source /workspace/env.sh
+# POD_ENV selects the runtime: the research venv by default, or /workspace/env-pr.sh
+# for a server from the PR checkout (/opt/sglang-pr) with this harness.
+source "${POD_ENV:-/workspace/env.sh}"
 trace=$1 slowdown=$2 minutes=$3
 shift 3
 marker=/workspace/results/.mooncake_main_done
