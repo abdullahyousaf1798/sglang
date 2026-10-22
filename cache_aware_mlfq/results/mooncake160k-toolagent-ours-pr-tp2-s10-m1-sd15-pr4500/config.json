@@ -1,0 +1,46 @@
+{
+  "name": "mooncake160k-toolagent-ours-pr-tp2-s10-m1-sd15-pr4500",
+  "workload_name": "mooncake",
+  "started_at": "2026-10-22T04:23:56Z",
+  "gpu": "NVIDIA RTX PRO 4500 Blackwell\nNVIDIA RTX PRO 4500 Blackwell",
+  "server_args": [
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--port",
+    "30000",
+    "--mem-fraction-static",
+    "0.88",
+    "--context-length",
+    "131072",
+    "--json-model-override-args",
+    "{\"max_position_embeddings\": 131072, \"rope_scaling\": {\"rope_type\": \"yarn\", \"factor\": 4.0, \"original_max_position_embeddings\": 32768}}",
+    "--enable-hierarchical-cache",
+    "--hicache-size",
+    "80",
+    "--enable-metrics",
+    "--schedule-policy",
+    "sj-mlfq",
+    "--enable-priority-scheduling",
+    "--retraction-policy",
+    "priority",
+    "--sj-mlfq-cost",
+    "cache-aware",
+    "--disable-priority-preemption",
+    "--tp",
+    "2",
+    "--max-total-tokens",
+    "160000",
+    "--hicache-size",
+    "40"
+  ],
+  "workload": {
+    "trace": "/workspace/data/mooncake_toolagent.jsonl",
+    "start-min": 10.0,
+    "minutes": 1.0,
+    "slowdown": 15.0
+  },
+  "code": {
+    "commit": "2c4a8198be698cfbd3296463eb7f4c6dbbe04e07",
+    "dirty": true
+  }
+}
